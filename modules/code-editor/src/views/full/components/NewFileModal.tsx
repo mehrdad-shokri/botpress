@@ -1,5 +1,6 @@
 import { Button, Checkbox, Classes, Dialog, FormGroup, InputGroup, Intent, Radio, RadioGroup } from '@blueprintjs/core'
 import { lang } from 'botpress/shared'
+import { ALL_BOTS } from 'common/utils'
 import _ from 'lodash'
 import React, { FC, useEffect, useState } from 'react'
 
@@ -26,16 +27,17 @@ const sanitizeName = (text: string) =>
 
 const NewFileModal: FC<Props> = props => {
   const [name, setName] = useState('')
-  const [isScoped, setScoped] = useState(true)
+  const [isScoped, setScoped] = useState(FileTypes[props.selectedType]?.allowScoped ?? true)
 
   useEffect(() => {
+    setScoped(FileTypes[props.selectedType]?.allowScoped)
     setName('')
   }, [props.isOpen])
 
   const submit = async e => {
     e.preventDefault()
 
-    const finalName = name.endsWith('.js') || name.endsWith('.json') ? name : name + '.js'
+    const finalName = name.endsWith('.js') || name.endsWith('.json') ? name : `${name}.js`
 
     let content
     switch (props.selectedType) {
@@ -62,9 +64,11 @@ const NewFileModal: FC<Props> = props => {
     closeModal()
   }
 
+  const isGlobalApp = window.BOT_ID === ALL_BOTS
   const canBeBotScoped = () =>
-    props.selectedType !== 'hook' ||
-    (props.selectedType === 'hook' && BOT_SCOPED_HOOKS.includes(props.selectedHookType))
+    !isGlobalApp &&
+    (props.selectedType !== 'hook' ||
+      (props.selectedType === 'hook' && BOT_SCOPED_HOOKS.includes(props.selectedHookType)))
 
   const closeModal = () => {
     setName('')
@@ -118,7 +122,7 @@ const NewFileModal: FC<Props> = props => {
             <Button
               type="submit"
               id="btn-submit"
-              text={lang.tr(`submit`)}
+              text={lang.tr('submit')}
               intent={Intent.PRIMARY}
               onClick={submit}
               disabled={!name}

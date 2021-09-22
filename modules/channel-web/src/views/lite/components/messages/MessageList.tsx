@@ -1,6 +1,6 @@
 import { ResizeObserver } from '@juggle/resize-observer'
 import differenceInMinutes from 'date-fns/difference_in_minutes'
-import { debounce } from 'lodash'
+import debounce from 'lodash/debounce'
 import { observe } from 'mobx'
 import { inject, observer } from 'mobx-react'
 import React from 'react'
@@ -30,15 +30,17 @@ class MessageList extends React.Component<MessageListProps, State> {
       focus.newValue === 'convo' && this.messagesDiv.focus()
     })
 
-    observe(this.props.currentMessages, messages => {
-      if (this.state.manualScroll) {
-        if (!this.state.showNewMessageIndicator) {
-          this.setState({ showNewMessageIndicator: true })
+    if (this.props.currentMessages) {
+      observe(this.props.currentMessages, messages => {
+        if (this.state.manualScroll) {
+          if (!this.state.showNewMessageIndicator) {
+            this.setState({ showNewMessageIndicator: true })
+          }
+          return
         }
-        return
-      }
-      this.tryScrollToBottom()
-    })
+        this.tryScrollToBottom()
+      })
+    }
 
     // this should account for keyboard rendering as it triggers a resize of the messagesDiv
     this.divSizeObserver = new ResizeObserver(
@@ -77,8 +79,9 @@ class MessageList extends React.Component<MessageListProps, State> {
     }
 
     const maxScroll = this.messagesDiv.scrollHeight - this.messagesDiv.clientHeight
-    const shouldFocusNext = e.key == 'ArrowRight' || (e.key == 'ArrowDown' && this.messagesDiv.scrollTop == maxScroll)
-    const shouldFocusPrevious = e.key == 'ArrowLeft' || (e.key == 'ArrowUp' && this.messagesDiv.scrollTop == 0)
+    const shouldFocusNext =
+      e.key === 'ArrowRight' || (e.key === 'ArrowDown' && this.messagesDiv.scrollTop === maxScroll)
+    const shouldFocusPrevious = e.key === 'ArrowLeft' || (e.key === 'ArrowUp' && this.messagesDiv.scrollTop === 0)
 
     if (shouldFocusNext) {
       this.messagesDiv.blur()
@@ -94,38 +97,38 @@ class MessageList extends React.Component<MessageListProps, State> {
   renderDate(date) {
     return (
       <div className={'bpw-date-container'}>
-        {this.props.intl.formatTime(new Date(date), {
-          hour12: false,
-          year: 'numeric',
-          month: 'long',
+        {new Intl.DateTimeFormat(this.props.intl.locale || 'en', {
+          month: 'short',
           day: 'numeric',
           hour: 'numeric',
           minute: 'numeric'
-        })}
+        }).format(new Date(date))}
         <div className={'bpw-small-line'} />
       </div>
     )
   }
 
   renderAvatar(name, url) {
-    return <Avatar name={name} avatarUrl={url} height={40} width={40} />
+    const avatarSize = this.props.isEmulator ? 20 : 40 // quick fix
+    return <Avatar name={name} avatarUrl={url} height={avatarSize} width={avatarSize} />
   }
 
   renderMessageGroups() {
     const messages = (this.props.currentMessages || []).filter(m => this.shouldDisplayMessage(m))
-    const groups = []
+    const groups: Message[][] = []
 
     let lastSpeaker = undefined
     let lastDate = undefined
     let currentGroup = undefined
 
     messages.forEach(m => {
-      const speaker = m.full_name
-      const date = m.sent_on
+      const speaker = m.payload.channel?.web?.userName || m.authorId
+      const date = m.sentOn
 
       // Create a new group if messages are separated by more than X minutes or if different speaker
       if (
         speaker !== lastSpeaker ||
+        !currentGroup ||
         differenceInMinutes(new Date(date), new Date(lastDate)) >= constants.TIME_BETWEEN_DATES
       ) {
         currentGroup = []
@@ -148,35 +151,36 @@ class MessageList extends React.Component<MessageListProps, State> {
       }
 
       currentGroup.push({
-        sent_on: new Date(),
+        sentOn: new Date(),
         userId: undefined,
-        message_type: 'typing'
+        payload: { type: 'typing' }
       })
     }
     return (
       <div>
         {groups.map((group, i) => {
           const lastGroup = groups[i - 1]
-          const lastDate = lastGroup?.[lastGroup.length - 1]?.sent_on
-          const groupDate = group?.[0].sent_on
+          const lastDate = lastGroup?.[lastGroup.length - 1]?.sentOn
+          const groupDate = group?.[0].sentOn
 
           const isDateNeeded =
             !groups[i - 1] ||
             differenceInMinutes(new Date(groupDate), new Date(lastDate)) > constants.TIME_BETWEEN_DATES
 
-          const [{ userId, full_name: userName, avatar_url: avatarUrl }] = group
+          const [{ authorId, payload }] = group
 
-          const avatar = userId
-            ? this.props.showUserAvatar && this.renderAvatar(userName, avatarUrl)
-            : this.renderAvatar(this.props.botName, avatarUrl || this.props.botAvatarUrl)
+          const avatar = authorId
+            ? this.props.showUserAvatar &&
+              this.renderAvatar(payload.channel?.web?.userName, payload.channel?.web?.avatarUrl)
+            : this.renderAvatar(this.props.botName, payload.channel?.web?.avatarUrl || this.props.botAvatarUrl)
 
           return (
             <div key={i}>
-              {isDateNeeded && this.renderDate(group[0].sent_on)}
+              {isDateNeeded && this.renderDate(group[0].sentOn)}
               <MessageGroup
-                isBot={!userId}
+                isBot={!authorId}
                 avatar={avatar}
-                userName={userName}
+                userName={payload.channel?.web?.userName}
                 key={`msg-group-${i}`}
                 isLastGroup={i >= groups.length - 1}
                 messages={group}
@@ -189,7 +193,7 @@ class MessageList extends React.Component<MessageListProps, State> {
   }
 
   shouldDisplayMessage = (m: Message): boolean => {
-    return m.message_type !== 'postback'
+    return m.payload.type !== 'postback'
   }
 
   handleScroll = debounce(e => {
@@ -215,7 +219,7 @@ class MessageList extends React.Component<MessageListProps, State> {
           <div className="bpw-new-messages-indicator" onClick={e => this.tryScrollToBottom()}>
             <span>
               {this.props.intl.formatMessage({
-                id: 'messages.newMessage' + (this.props.currentMessages.length === 1 ? '' : 's')
+                id: `messages.newMessage${this.props.currentMessages.length === 1 ? '' : 's'}`
               })}
             </span>
           </div>
@@ -228,6 +232,7 @@ class MessageList extends React.Component<MessageListProps, State> {
 
 export default inject(({ store }: { store: RootStore }) => ({
   intl: store.intl,
+  isEmulator: store.isEmulator,
   botName: store.botName,
   isBotTyping: store.isBotTyping,
   botAvatarUrl: store.botAvatarUrl,
@@ -236,7 +241,8 @@ export default inject(({ store }: { store: RootStore }) => ({
   focusNext: store.view.focusNext,
   focusedArea: store.view.focusedArea,
   showUserAvatar: store.config.showUserAvatar,
-  enableArrowNavigation: store.config.enableArrowNavigation
+  enableArrowNavigation: store.config.enableArrowNavigation,
+  preferredLanguage: store.preferredLanguage
 }))(injectIntl(observer(MessageList)))
 
 type MessageListProps = InjectedIntlProps &
@@ -248,8 +254,10 @@ type MessageListProps = InjectedIntlProps &
     | 'focusPrevious'
     | 'focusNext'
     | 'botAvatarUrl'
+    | 'isEmulator'
     | 'botName'
     | 'enableArrowNavigation'
     | 'showUserAvatar'
     | 'currentMessages'
+    | 'preferredLanguage'
   >

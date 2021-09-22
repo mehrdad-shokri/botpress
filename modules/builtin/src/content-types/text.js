@@ -1,71 +1,8 @@
 const base = require('./_base')
-
-function render(data) {
-  const events = []
-
-  if (data.typing) {
-    events.push({
-      type: 'typing',
-      value: data.typing
-    })
-  }
-
-  return [
-    ...events,
-    {
-      type: 'text',
-      markdown: data.markdown,
-      text: data.text,
-      collectFeedback: data.collectFeedback
-    }
-  ]
-}
-
-function renderMessenger(data) {
-  const events = []
-
-  if (data.typing) {
-    events.push({
-      type: 'typing',
-      value: data.typing
-    })
-  }
-
-  return [
-    ...events,
-    {
-      type: 'text',
-      text: data.text
-    }
-  ]
-}
-
-function renderTeams(data) {
-  const events = []
-
-  if (data.typing) {
-    events.push({
-      type: 'typing'
-    })
-  }
-
-  return [
-    ...events,
-    {
-      type: 'message',
-      text: data.text
-    }
-  ]
-}
+const utils = require('./_utils')
 
 function renderElement(data, channel) {
-  if (channel === 'messenger') {
-    return renderMessenger(data)
-  } else if (channel === 'teams') {
-    return renderTeams(data)
-  } else {
-    return render(data)
-  }
+  return utils.extractPayload('text', data)
 }
 
 module.exports = {
@@ -90,11 +27,7 @@ module.exports = {
           default: ''
         }
       },
-      markdown: {
-        type: 'boolean',
-        title: 'module.builtin.useMarkdown',
-        default: true
-      },
+      ...base.useMarkdown,
       ...base.typingIndicators
     }
   },

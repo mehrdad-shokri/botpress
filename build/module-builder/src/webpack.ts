@@ -41,10 +41,13 @@ export function config(projectPath) {
       'botpress/shared': 'BotpressShared'
     },
     resolveLoader: {
-      modules: ['node_modules', path.resolve(__dirname, '../node_modules')]
+      modules: [path.resolve(__dirname, '../node_modules'), 'node_modules']
     },
     resolve: {
-      modules: ['node_modules', path.resolve(__dirname, '../../../src/bp/ui-studio/node_modules')],
+      alias: {
+        common: path.resolve(__dirname, '../../../packages/bp/dist/common')
+      },
+      modules: ['node_modules', path.resolve(__dirname, '../../../packages/ui-shared/node_modules')],
       extensions: ['.js', '.jsx', '.tsx', '.ts']
     },
     plugins: [new CleanWebpackPlugin()],
@@ -78,7 +81,7 @@ export function config(projectPath) {
               options: {
                 modules: true,
                 importLoaders: 1,
-                localIdentName: packageJson.name + '__[name]__[local]___[hash:base64:5]'
+                localIdentName: `${packageJson.name}__[name]__[local]___[hash:base64:5]`
               }
             },
             { loader: 'sass-loader' }

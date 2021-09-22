@@ -23,7 +23,7 @@ const onFlowChanged = async (bp: typeof sdk, botId: string, flow: sdk.Flow) => {
  * This is where you would include your 'demo-bot' definitions.
  * You can copy the content of any existing bot and mark them as "templates", so you can create multiple bots from the same template.
  */
-const botTemplates: sdk.BotTemplate[] = [{ id: 'my_bot_demo', name: 'Bot Demo', desc: `Some description` }]
+const botTemplates: sdk.BotTemplate[] = [{ id: 'my_bot_demo', name: 'Bot Demo', desc: 'Some description' }]
 
 /**
  * Skills allows you to create custom logic and use them easily on the flow editor
@@ -43,8 +43,8 @@ const entryPoint: sdk.ModuleEntryPoint = {
     // This must match the name of your module's folder, and the name in package.json
     name: 'complete-module',
     /**
-     * When menuIcon is set to `custom`, you need to provide an icon. It must be at that location: `/assets/icon.png`
-     * Otherwise, use Material icons name: https://material.io/tools/icons/?style=baseline
+     * By default we are using the https://blueprintjs.com/docs/#icons. Use the corresponding name
+     * Otherwise, create an icon in the assets module in the following format studio_${module.menuIcon}
      */
     menuIcon: 'flag',
     // This is the name of your module which will be displayed in the sidebar

@@ -10,6 +10,8 @@ export const getOverridedComponent = (overrides, componentName) => {
   }
 }
 
+export const isIE = window.navigator.userAgent.match(/MSIE|Trident/) !== null
+
 export const asyncDebounce = async timeMs => {
   let lastClickInMs = undefined
 
@@ -44,7 +46,7 @@ export const checkLocationOrigin = () => {
   if (!window.location.origin) {
     const { protocol, hostname, port } = window.location
     // @ts-ignore
-    window.location.origin = `${protocol}//${hostname}${port && ':' + port}`
+    window.location.origin = `${protocol}//${hostname}${port && `:${port}`}`
   }
 }
 
@@ -61,7 +63,7 @@ export const initializeAnalytics = () => {
       // @ts-ignore
       ReactGA.pageview(window.location.pathname + window.location.search)
     } catch (err) {
-      console.log('Error init analytics', err)
+      console.error('Error init analytics', err)
     }
   }
 }
@@ -90,5 +92,44 @@ export const renderUnsafeHTML = (message: string = '', escaped: boolean): string
   }
 
   const html = snarkdown(message)
-  return html.replace(/<a href/gi, `<a target="_blank" href`)
+  return html.replace(/<a href/gi, '<a target="_blank" href')
+}
+
+const rtlLocales = [
+  'ae' /* Avestan */,
+  'ar' /* 'العربية', Arabic */,
+  'arc' /* Aramaic */,
+  'bcc' /* 'بلوچی مکرانی', Southern Balochi */,
+  'bqi' /* 'بختياري', Bakthiari */,
+  'ckb' /* 'Soranî / کوردی', Sorani */,
+  'dv' /* Dhivehi */,
+  'fa' /* 'فارسی', Persian */,
+  'glk' /* 'گیلکی', Gilaki */,
+  'he' /* 'עברית', Hebrew */,
+  'ku' /* 'Kurdî / كوردی', Kurdish */,
+  'mzn' /* 'مازِرونی', Mazanderani */,
+  'nqo' /* N'Ko */,
+  'pnb' /* 'پنجابی', Western Punjabi */,
+  'ps' /* 'پښتو', Pashto, */,
+  'sd' /* 'سنڌي', Sindhi */,
+  'ug' /* 'Uyghurche / ئۇيغۇرچە', Uyghur */,
+  'ur' /* 'اردو', Urdu */,
+  'yi' /* 'ייִדיש', Yiddish */
+]
+
+// 'en-US' becomes ['en', '-us'] 'en' becomes ['en']
+const localeRegex = /^([a-zA-Z]*)([_\-a-zA-Z]*)$/
+
+export const isRTLLocale = (locale: string | undefined | null): boolean => {
+  if (!locale) {
+    return false
+  }
+  locale = locale.toLowerCase()
+  const matches = localeRegex.exec(locale)
+
+  if (!matches) {
+    return false
+  }
+
+  return rtlLocales.includes(matches[1])
 }

@@ -3,6 +3,7 @@ import * as sdk from 'botpress/sdk'
 import _ from 'lodash'
 
 import en from '../translations/en.json'
+import es from '../translations/es.json'
 import fr from '../translations/fr.json'
 
 import api from './api'
@@ -32,13 +33,14 @@ const entryPoint: sdk.ModuleEntryPoint = {
   onServerStarted,
   onServerReady,
   onModuleUnmount,
-  translations: { en, fr },
+  translations: { en, fr, es },
   definition: {
     name: 'analytics',
     fullName: 'Analytics',
     homepage: 'https://botpress.com',
     menuIcon: 'timeline-line-chart',
-    menuText: 'Analytics'
+    menuText: 'Analytics',
+    workspaceApp: { bots: true }
   }
 }
 

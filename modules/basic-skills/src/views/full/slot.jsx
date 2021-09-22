@@ -69,14 +69,14 @@ export class Slot extends React.Component {
   }
 
   fetchIntents = () => {
-    return this.props.bp.axios.get('/mod/nlu/intents').then(({ data }) => {
+    return this.props.bp.axios.get('/nlu/intents').then(({ data }) => {
       const intents = data.filter(x => !x.name.startsWith('__qna'))
       this.setState({ intents })
     })
   }
 
   fetchActions = () => {
-    this.props.bp.axios.get(`/actions`).then(({ data }) => {
+    this.props.bp.axios.get(`/actions`, { baseURL: window.STUDIO_API_PATH }).then(({ data }) => {
       this.setState({
         actions: data
           .filter(action => !action.hidden)
