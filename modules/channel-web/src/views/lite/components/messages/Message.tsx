@@ -1,14 +1,16 @@
 import classnames from 'classnames'
 import pick from 'lodash/pick'
 import { inject, observer } from 'mobx-react'
-import React, { Component, Fragment } from 'react'
+import React, { Component } from 'react'
 import { InjectedIntlProps, injectIntl } from 'react-intl'
 
 import { RootStore, StoreDef } from '../../store'
 import { Renderer } from '../../typings'
+import { showContextMenu } from '../ContextMenu'
 import * as Keyboard from '../Keyboard'
 
-import { Carousel, FileMessage, LoginPrompt, Text } from './renderer'
+import { Carousel, FileMessage, LoginPrompt, Text, VoiceMessage } from './renderer'
+import { Dropdown } from './renderer/Dropdown'
 
 class Message extends Component<MessageProps> {
   state = {
@@ -16,7 +18,7 @@ class Message extends Component<MessageProps> {
     showMore: false
   }
 
-  static getDerivedStateFromError(_error) {
+  static getDerivedStateFromError(_error: Error) {
     return { hasError: true }
   }
 
@@ -31,6 +33,7 @@ class Message extends Component<MessageProps> {
         intl={this.props.intl}
         maxLength={this.props.payload.trimLength}
         escapeHTML={this.props.store.escapeHTML}
+        isBotMessage={this.props.isBotMessage}
       />
     )
   }
@@ -50,7 +53,15 @@ class Message extends Component<MessageProps> {
   }
 
   render_carousel() {
-    return <Carousel onSendData={this.props.onSendData} carousel={this.props.payload} />
+    return (
+      <Carousel
+        onSendData={this.props.onSendData}
+        carousel={this.props.payload}
+        escapeHTML={this.props.store.escapeHTML}
+        isBotMessage={this.props.isBotMessage}
+        intl={this.props.intl}
+      />
+    )
   }
 
   render_typing() {
@@ -63,14 +74,41 @@ class Message extends Component<MessageProps> {
     )
   }
 
+  render_audio() {
+    return <FileMessage file={this.props.payload} escapeTextHTML={this.props.store.escapeHTML} />
+  }
+
+  render_video() {
+    return <FileMessage file={this.props.payload} escapeTextHTML={this.props.store.escapeHTML} />
+  }
+
+  render_image() {
+    return <FileMessage file={this.props.payload} escapeTextHTML={this.props.store.escapeHTML} />
+  }
+
   render_file() {
     return <FileMessage file={this.props.payload} escapeTextHTML={this.props.store.escapeHTML} />
+  }
+
+  render_voice() {
+    return (
+      <VoiceMessage
+        file={this.props.payload}
+        shouldPlay={this.props.shouldPlay}
+        onAudioEnded={this.props.onAudioEnded}
+      />
+    )
   }
 
   render_custom() {
     const { module = undefined, component = undefined, wrapped = undefined } = this.props.payload || {}
     if (!module || !component) {
       return this.render_unsupported()
+    }
+
+    // TODO: Remove eventually, it's for backward compatibility
+    if (module === 'extensions' && component === 'Dropdown') {
+      return this.render_dropdown()
     }
 
     const InjectedModuleView = this.props.store.bp.getModuleInjector()
@@ -80,7 +118,7 @@ class Message extends Component<MessageProps> {
     delete messageDataProps.component
 
     const sanitizedProps = pick(this.props, [
-      'incomingEventId',
+      'messageId',
       'isLastGroup',
       'isLastOfGroup',
       'isBotMessage',
@@ -114,11 +152,12 @@ class Message extends Component<MessageProps> {
     return '*Unsupported message type*'
   }
 
+  render_dropdown() {
+    return <Dropdown {...this.props} {...this.props.payload} escapeHTML={this.props.store.escapeHTML}></Dropdown>
+  }
+
   handleContextMenu = e => {
-    const showContextMenu = window.botpress.extensions && window.botpress.extensions.showContextMenu
-    if (showContextMenu) {
-      showContextMenu(e, this.props)
-    }
+    showContextMenu(e, this.props)
   }
 
   renderTimestamp() {
@@ -129,6 +168,16 @@ class Message extends Component<MessageProps> {
     )
   }
 
+  async onMessageClicked() {
+    await this.props.store.loadEventInDebugger(this.props.messageId, true)
+  }
+
+  componentDidMount() {
+    this.props.isLastGroup &&
+      this.props.isLastOfGroup &&
+      this.props.store.composer.setLocked(this.props.payload.disableFreeText)
+  }
+
   render() {
     if (this.state.hasError) {
       return '* Cannot display message *'
@@ -136,8 +185,9 @@ class Message extends Component<MessageProps> {
 
     const type = this.props.type || (this.props.payload && this.props.payload.type)
     const wrappedType = this.props.payload && this.props.payload.wrapped && this.props.payload.wrapped.type
-    const renderer = (this['render_' + type] || this.render_unsupported).bind(this)
+    const renderer = (this[`render_${type}`] || this.render_unsupported).bind(this)
     const wrappedClass = `bpw-bubble-${wrappedType}`
+    const isEmulator = this.props.store.config.isEmulator
 
     const rendered = renderer()
     if (rendered === null) {
@@ -146,7 +196,7 @@ class Message extends Component<MessageProps> {
 
     const additionalStyle = (this.props.payload && this.props.payload['web-style']) || {}
 
-    if (this.props.noBubble) {
+    if (this.props.noBubble || this.props.payload?.wrapped?.noBubble) {
       return (
         <div className={classnames(this.props.className, wrappedClass)} style={additionalStyle}>
           {rendered}
@@ -156,10 +206,12 @@ class Message extends Component<MessageProps> {
 
     return (
       <div
-        className={classnames(this.props.className, wrappedClass, 'bpw-chat-bubble', 'bpw-bubble-' + type, {
-          'bpw-bubble-highlight': this.props.isHighlighted
+        className={classnames(this.props.className, wrappedClass, 'bpw-chat-bubble', `bpw-bubble-${type}`, {
+          'bpw-bubble-highlight': this.props.isHighlighted,
+          'bpw-msg-hovering': isEmulator
         })}
         data-from={this.props.fromLabel}
+        onClick={() => this.onMessageClicked()}
         tabIndex={-1}
         style={additionalStyle}
       >

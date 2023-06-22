@@ -18,6 +18,7 @@ export interface ChoiceConfig {
   nbMaxRetries: number
   repeatChoicesOnInvalid: boolean
   contentElement: string
+  variableName: string
 }
 
 const setup = async bp => {
@@ -54,7 +55,9 @@ const generateFlow = async (
   data: ChoiceData,
   metadata: sdk.FlowGeneratorMetadata
 ): Promise<sdk.FlowGenerationResult> => {
-  const { randomId } = data
+  const { variableName } = data.config
+  const randomId = variableName && variableName.length ? variableName : data.randomId
+  const keySuffix = randomId ? `-${randomId}` : ''
 
   const hardRetryLimit = 10
   const nbMaxRetries = Math.min(Number(data.config.nbMaxRetries), hardRetryLimit)
@@ -85,6 +88,10 @@ const generateFlow = async (
     {
       name: 'entry',
       onEnter: [
+        {
+          type: sdk.NodeActionType.RunAction,
+          name: `builtin/setVariable {"type":"temp","name":"skill-choice-invalid-count${keySuffix}","value": 0 }`
+        },
         {
           type: sdk.NodeActionType.RenderElement,
           name: `#!${data.contentId}`,
@@ -176,7 +183,7 @@ const generateFlow = async (
   return {
     transitions: createTransitions(data),
     flow: {
-      nodes: nodes,
+      nodes,
       catchAll: {
         next: []
       }

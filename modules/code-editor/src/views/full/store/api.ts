@@ -15,7 +15,7 @@ export default class CodeEditorApi {
       const { data } = await this.axios.get('/mod/code-editor/permissions')
       return data
     } catch (err) {
-      console.error(`Error while fetching code editor permissions`, err)
+      console.error('Error while fetching code editor permissions', err)
     }
   }
 
@@ -33,7 +33,7 @@ export default class CodeEditorApi {
       const { data } = await this.axios.get('/mod/code-editor/typings')
       return data
     } catch (err) {
-      console.error(`Error while fetching typings`, err)
+      console.error('Error while fetching typings', err)
     }
   }
 
@@ -69,7 +69,7 @@ export default class CodeEditorApi {
       const { data } = await this.axios.post('/mod/code-editor/readFile', file)
       return data.fileContent
     } catch (err) {
-      this.handleApiError(err, 'Could not check if file already exists')
+      this.handleApiError(err, 'Error while reading file')
     }
   }
 
@@ -97,7 +97,7 @@ export default class CodeEditorApi {
 
   async uploadFile(data: FormData): Promise<boolean> {
     try {
-      await this.axios.post(`/mod/code-editor/upload`, data, {
+      await this.axios.post('/mod/code-editor/upload', data, {
         headers: { 'Content-Type': 'multipart/form-data' }
       })
       return true

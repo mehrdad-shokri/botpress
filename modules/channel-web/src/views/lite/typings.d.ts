@@ -1,7 +1,9 @@
+import { BPStorage } from '../../../../../packages/ui-shared-lite/utils/storage'
 import { RootStore } from './store'
 
 declare global {
   interface Window {
+    __BP_VISITOR_SOCKET_ID: string
     __BP_VISITOR_ID: string
     botpressWebChat: any
     store: RootStore
@@ -15,10 +17,13 @@ declare global {
     SEND_USAGE_STATS: boolean
     SHOW_POWERED_BY: boolean
     USE_SESSION_STORAGE: boolean
-    BP_STORAGE: any
+    BP_STORAGE: BPStorage
     botpress: {
       [moduleName: string]: any
     }
+    APP_NAME: string
+    APP_FAVICON: string
+    APP_CUSTOM_CSS: string
   }
 }
 
@@ -30,7 +35,7 @@ export namespace Renderer {
     store?: RootStore
     bp?: StudioConnector
     fromLabel?: string
-    incomingEventId?: string
+    messageId?: uuid
     /** When true, the message isn't wrapped by its bubble */
     noBubble?: boolean
     keyboard?: any
@@ -46,6 +51,10 @@ export namespace Renderer {
 
     onSendData?: (data: any) => Promise<void>
     onFileUpload?: (label: string, payload: any, file: File) => Promise<void>
+
+    /** Allows to autoplay voice messages coming from the bot */
+    onAudioEnded?: () => void
+    shouldPlay?: boolean
   }
 
   export type Button = {
@@ -63,9 +72,29 @@ export namespace Renderer {
     maxLength?: number
   } & Message
 
+  export interface Option {
+    label: string
+    value: string
+  }
+
+  export type Dropdown = {
+    options: Option[]
+    buttonText?: string
+    escapeHTML: boolean
+    allowCreation?: boolean
+    placeholderText?: string
+    allowMultiple?: boolean
+    width?: number
+    markdown: boolean
+    message: string
+    displayInKeyboard?: boolean
+  } & Message
+
   export type QuickReply = {
     buttons: any
     quick_replies: any
+    disableFreeText: boolean
+    displayInMessage?: boolean
   } & Message
 
   export type QuickReplyButton = {
@@ -76,11 +105,22 @@ export namespace Renderer {
   export interface FileMessage {
     file: {
       url: string
-      name: string
+      title: string
       storage: string
       text: string
     }
     escapeTextHTML: boolean
+  }
+
+  export interface VoiceMessage {
+    file: {
+      type: string
+      audio: string
+      autoPlay?: boolean
+    }
+
+    shouldPlay: boolean
+    onAudioEnded: () => void
   }
 
   export interface FileInput {
@@ -102,6 +142,7 @@ export namespace Renderer {
     title: string
     subtitle: string
     buttons: CardButton[]
+    markdown: boolean
   }
 
   export interface CardButton {
@@ -127,21 +168,25 @@ export interface StudioConnector {
   loadModuleView: any
 }
 
-export type Config = {
+export interface Config {
   botId?: string
   externalAuthToken?: string
   userId?: string
+  conversationId?: uuid
   /** Allows to set a different user id for different windows (eg: studio, specific bot, etc) */
   userIdScope?: string
   enableReset: boolean
   stylesheet: string
+  isEmulator?: boolean
   extraStylesheet: string
   showConversationsButton: boolean
   showUserName: boolean
   showUserAvatar: boolean
   showTimestamp: boolean
   enableTranscriptDownload: boolean
+  enableConversationDeletion: boolean
   enableArrowNavigation: boolean
+  closeOnEscape: boolean
   botName?: string
   composerPlaceholder?: string
   avatarUrl?: string
@@ -160,6 +205,8 @@ export type Config = {
   disableAnimations: boolean
   /** When true, sets ctrl+Enter as shortcut for reset session then send */
   enableResetSessionShortcut: boolean
+  /** When true, webchat tries to use native webspeech api (uses hosted mozilla and google voice services) */
+  enableVoiceComposer: boolean
   recentConversationLifetime: string
   startNewConvoOnTimeout: boolean
   /** Use sessionStorage instead of localStorage, which means the session expires when tab is closed */
@@ -173,9 +220,21 @@ export type Config = {
   exposeStore: boolean
   /** Reference ensures that a specific value and its signature are valid */
   reference: string
+  /** If true, Websocket is created when the Webchat is opened. Bot cannot be proactive. */
+  lazySocket?: boolean
+  /** If true, chat will no longer play the notification sound for new messages. */
+  disableNotificationSound?: boolean
+  /** Refers to a specific webchat reference in parent window. Useful when using multiple chat window */
+  chatId?: string
+  /** CSS class to be applied to iframe */
+  className?: string
+  /** Force the display to use a specific mode (Fullscreen or Embedded)
+   * Defaults to 'Embedded'
+   */
+  viewMode?: 'Embedded' | 'Fullscreen'
 }
 
-type OverridableComponents = 'below_conversation' | 'before_container' | 'composer'
+type OverridableComponents = 'below_conversation' | 'before_container' | 'composer' | 'before_widget'
 
 interface Overrides {
   [componentToOverride: string]: [
@@ -204,25 +263,23 @@ export interface BotInfo {
   security: {
     escapeHTML: boolean
   }
+  lazySocket: boolean
+  maxMessageLength: number
+  alwaysScrollDownOnMessages: boolean
 }
 
-interface Conversation {
-  id: number
-  last_heard_on: Date | undefined
-  logo_url: string | undefined
-  created_on: Date
-  description: string | undefined
-  title: string
+export type uuid = string
+
+export interface Conversation {
+  id: uuid
+  clientId: uuid
+  userId: uuid
+  createdOn: Date
 }
 
-/** This is the interface representing the conversations in the list  */
-export type ConversationSummary = {
-  message_sent_on: Date
-  message_author: string
-  message_author_avatar: string
-  message_text: string
-  message_type: string
-} & Conversation
+export interface RecentConversation extends Conversation {
+  lastMessage?: Message
+}
 
 /** Represents the current conversation with all messages */
 export type CurrentConversation = {
@@ -235,18 +292,11 @@ export type CurrentConversation = {
 } & Conversation
 
 export interface Message {
-  id: string
-  userId: string
-  incomingEventId: string
-  conversationId: number
-  avatar_url: string | undefined
-  full_name: string
-  message_data: any | undefined
-  message_raw: any | undefined
-  message_text: string | undefined
-  message_type: string | undefined
+  id: uuid
+  conversationId: uuid
+  authorId: uuid | undefined
+  sentOn: Date
   payload: any
-  sent_on: Date
   // The typing delay in ms
   timeInMs: number
 }
@@ -299,6 +349,6 @@ interface MessageWrapper {
 }
 
 export interface EventFeedback {
-  incomingEventId: string
+  messageId: uuid
   feedback?: number
 }

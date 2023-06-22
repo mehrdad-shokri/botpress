@@ -1,7 +1,8 @@
+const base = require('./_base')
 const ActionButton = require('./action_button')
-const Carousel = require('./carousel')
+const utils = require('./_utils')
 
-module.exports = {
+const Card = {
   id: 'builtin_card',
   group: 'Built-in Messages',
   title: 'card',
@@ -21,7 +22,7 @@ module.exports = {
       },
       image: {
         type: 'string',
-        $subtype: 'media',
+        $subtype: 'image',
         $filter: '.jpg, .png, .jpeg, .gif, .bmp, .tif, .tiff|image/*',
         title: 'image'
       },
@@ -29,13 +30,19 @@ module.exports = {
         type: 'array',
         title: 'module.builtin.actionButton',
         items: ActionButton.jsonSchema
-      }
+      },
+      ...base.useMarkdown
     }
   },
 
-  uiSchema: {
-  },
+  uiSchema: {},
 
   computePreviewText: formData => formData.title && `Card: ${formData.title}`,
-  renderElement: (data, channel) => Carousel.renderElement({ items: [data], ...data }, channel)
+  renderElement: (data, channel) => {
+    return utils.extractPayload('card', data)
+  }
 }
+
+Card.jsonSchema.properties.markdown.default = false
+
+module.exports = Card

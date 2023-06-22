@@ -1,6 +1,6 @@
 import { AxiosRequestConfig, AxiosStatic } from 'axios'
 
-const MODULE_URL_PREFIX = '/mod/qna'
+const MODULE_URL_PREFIX = '/qna'
 
 class QnAApiClient {
   constructor(private axios: AxiosStatic) {}
@@ -43,8 +43,8 @@ class QnAApiClient {
   }
 
   async getCategories() {
-    const { categories } = await this.get('/categories')
-    return categories
+    const { data } = await this.axios.get('/nlu/contexts')
+    return data
   }
 }
 

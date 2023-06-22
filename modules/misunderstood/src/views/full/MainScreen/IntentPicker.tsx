@@ -3,14 +3,15 @@ import { MultiSelect } from '@blueprintjs/select'
 import { AxiosStatic } from 'axios'
 import { lang } from 'botpress/shared'
 import classnames from 'classnames'
+import { parseUtterance } from 'common/utterance-parser'
 import without from 'lodash/without'
 import React from 'react'
 
 import { ApiFlaggedEvent } from '../../../types'
 
-import style from './style.scss'
 import ApiClient from './NLUApiClient'
 import Pager from './Pager'
+import style from './style.scss'
 import VariationsOverlay from './VariationsOverlay'
 
 const ITEMS_PER_PAGE = 5
@@ -22,7 +23,7 @@ interface Params {
 interface Props {
   axios: AxiosStatic
   language: string
-  event: ApiFlaggedEvent
+  event: ApiFlaggedEvent | null
   selected: string
   params: Params
   onSelect: (id: string | null) => void
@@ -114,7 +115,7 @@ class IntentPicker extends React.Component<Props, State> {
   renderParamsForm() {
     const { event, params, selected: selectedItemName } = this.props
 
-    const eventContexts = event.nluContexts || []
+    const eventContexts = event?.nluContexts || []
     const selectedItem = this.state.intents.find(intent => intent.name === selectedItemName)
     const newContexts = without(eventContexts, ...selectedItem.contexts)
 
@@ -171,7 +172,7 @@ class IntentPicker extends React.Component<Props, State> {
 
     const { language } = this.props
 
-    const utterances = intent.utterances[language] || []
+    const utterances = (intent.utterances[language] || []).map(u => parseUtterance(u).utterance)
 
     return (
       <Card
@@ -193,7 +194,7 @@ class IntentPicker extends React.Component<Props, State> {
         {utterances[0] && (
           <p>
             U:&nbsp;{utterances[0]}&nbsp;
-            <VariationsOverlay elements={utterances} />
+            <VariationsOverlay elements={utterances} axios={this.props.axios} language={this.props.language} />
           </p>
         )}
 

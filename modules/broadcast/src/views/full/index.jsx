@@ -1,4 +1,3 @@
-import { toastFailure } from 'botpress/utils'
 import React from 'react'
 import ReactDOM from 'react-dom'
 import '@blueprintjs/datetime/lib/css/blueprint-datetime.css'
@@ -18,7 +17,7 @@ import {
   Icon
 } from '@blueprintjs/core'
 import { DateInput, TimePicker } from '@blueprintjs/datetime'
-import { Dialog, lang } from 'botpress/shared'
+import { Dialog, lang, toast } from 'botpress/shared'
 import cx from 'classnames'
 
 import moment from 'moment'
@@ -71,7 +70,7 @@ export default class BroadcastModule extends React.Component {
       })
       .catch(err => {
         console.error(err)
-        toastFailure(lang.tr('module.broadcast.cantFetchFromServer'))
+        toast.failure(lang.tr('module.broadcast.cantFetchFromServer'))
       })
   }
 
@@ -79,7 +78,7 @@ export default class BroadcastModule extends React.Component {
     const { content, date, userTimezone, time, filteringConditions } = this.state.broadcast
 
     if (!content) {
-      toastFailure(lang.tr('module.broadcast.contentFieldRequired'))
+      toast.failure(lang.tr('module.broadcast.contentFieldRequired'))
 
       return
     }
@@ -435,7 +434,7 @@ export default class BroadcastModule extends React.Component {
               <a
                 target="_blank"
                 rel="noopener noreferrer"
-                href="https://github.com/botpress/botpress/blob/master/modules/broadcast/README.md#filtering"
+                href="https://github.com/botpress/v12/blob/master/modules/broadcast/README.md#filtering"
               >
                 <Icon icon="help" />
               </a>

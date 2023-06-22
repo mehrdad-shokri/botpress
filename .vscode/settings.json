@@ -3,8 +3,16 @@
   "editor.tabSize": 2,
   "editor.formatOnSave": true,
   "files.eol": "\n",
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "eslint.nodePath": "./node_modules",
   "editor.codeActionsOnSave": {
-    "source.fixAll.tslint": true
+    "source.fixAll": true
+  },
+  "search.exclude": {
+    "**versioned**": true,
+    "**out/**/*.js": true,
+    "**out/**/*.d.ts": true,
+    "**.scss.d.ts": true
   },
   "files.associations": {
     "*.styl": "scss",
@@ -55,11 +63,11 @@
     "string": "cpp",
     "__split_buffer": "cpp"
   },
-  "favorites.resources": ["out/bp/data/global/botpress.config.json"],
+  "favorites.resources": ["packages/bp/dist/data", "packages/bp/dist/.env"],
   "sqltools.connections": [
     {
       "askForPassword": false,
-      "database": "./out/bp/data/storage/core.sqlite",
+      "database": "./packages/bp/dist/data/storage/core.sqlite",
       "dialect": "SQLite",
       "name": "BP Core DB"
     }

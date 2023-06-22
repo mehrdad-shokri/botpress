@@ -19,7 +19,11 @@ const getTransport = async botId => {
 }
 
 const extractTextFromPayloads = payloads => {
-  const text = _.get(payloads.find(p => p.type === 'text'), 'text', '')
+  const text = _.get(
+    payloads.find(p => p.type === 'text'),
+    'text',
+    ''
+  )
   return text.replace('(missing translation) ', '').replace(/([A-Z0-9_ -]+: )/gi, '')
 }
 

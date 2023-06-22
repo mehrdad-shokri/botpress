@@ -1,33 +1,13 @@
+import { BUILTIN_MODULES } from 'common/defaults'
+import { isValid } from 'common/utils'
 import jsonlintMod from 'jsonlint-mod'
 import _ from 'lodash'
 
 import { FileDefinition, FileTypes } from './definitions'
-import { FILENAME_REGEX } from './editor'
 import { EditorError } from './editorError'
 import { EditableFile, FilePermissions, FileType } from './typings'
 
 export const RAW_TYPE: FileType = 'raw'
-
-export const BUILTIN_MODULES = [
-  'analytics',
-  'basic-skills',
-  'bot-improvement',
-  'builtin',
-  'channel-messenger',
-  'channel-slack',
-  'channel-teams',
-  'channel-telegram',
-  'channel-web',
-  'code-editor',
-  'examples',
-  'extensions',
-  'misunderstood',
-  'history',
-  'hitl',
-  'nlu',
-  'qna',
-  'testing'
-]
 
 export const getBuiltinExclusion = () => {
   return _.flatMap(BUILTIN_MODULES, mod => [`${mod}/*`, `*/${mod}/*`])
@@ -57,7 +37,7 @@ export const assertValidJson = (content: string): boolean => {
 }
 
 export const assertValidFilename = (filename: string) => {
-  if (!FILENAME_REGEX.test(filename)) {
+  if (!isValid(filename, 'path')) {
     throw new EditorError('Filename has invalid characters')
   }
 }
@@ -97,7 +77,7 @@ export const validateFilePayload = async (
   }
 
   if (!arePermissionsValid(def, editableFile, permissions, actionType)) {
-    throw new EditorError(`No permission`)
+    throw new EditorError('No permission')
   }
 
   if (def.isJSON && content) {
@@ -115,10 +95,7 @@ export const validateFilePayload = async (
     throw new EditorError(`Invalid file name. Must match ${def.filenames}`)
   }
 
-  // Skip standard validation for raw, since you can set a complete folder path
-  if (type !== RAW_TYPE) {
-    assertValidFilename(name)
-  }
+  assertValidFilename(name)
 }
 
 export const buildRestrictedProcessVars = () => {
@@ -133,16 +110,12 @@ export const buildRestrictedProcessVars = () => {
   declare var process: RestrictedProcess;
   interface RestrictedProcess {
     ${root.map(x => {
-      return `/** Current value: ${x.value} */
-${x.name}: ${x.type}
-`
+      return `${x.name}: ${x.type}`
     })}
 
     env: {
       ${exposed.map(x => {
-        return `/** Current value: ${x.value} */
-${x.name}: ${x.type}
-`
+        return `${x.name}: ${x.type}`
       })}
     }
   }`

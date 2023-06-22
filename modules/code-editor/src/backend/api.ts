@@ -1,5 +1,6 @@
 import * as sdk from 'botpress/sdk'
 import { asyncMiddleware as asyncMw, BPRequest, UnexpectedError } from 'common/http'
+import { ALL_BOTS } from 'common/utils'
 import _ from 'lodash'
 import multer from 'multer'
 import path from 'path'
@@ -40,7 +41,20 @@ export default async (bp: typeof sdk, editor: Editor) => {
       try {
         const rawFiles = req.query.rawFiles === 'true'
         const includeBuiltin = req.query.includeBuiltin === 'true'
-        res.send(await editor.forBot(req.params.botId).getAllFiles(req.permissions, rawFiles, includeBuiltin))
+
+        let permissions = req.permissions
+
+        // Removing bot-specific permissions so we retrieve only global files (for all bots)
+        if (req.params.botId === ALL_BOTS && !rawFiles) {
+          permissions = Object.entries(req.permissions).reduce((perms, [key, val]) => {
+            if (val.isGlobal) {
+              perms[key] = val
+            }
+            return perms
+          }, {})
+        }
+
+        res.send(await editor.forBot(req.params.botId).getAllFiles(permissions, rawFiles, includeBuiltin))
       } catch (err) {
         throw new UnexpectedError('Error fetching files', err)
       }
@@ -80,21 +94,31 @@ export default async (bp: typeof sdk, editor: Editor) => {
     })
   )
 
-  router.post('/download', loadPermsMw, validateFilePayloadMw('read'), async (req: RequestWithPerms, res, next) => {
-    const buffer = await editor.forBot(req.params.botId).readFileBuffer(req.body)
+  router.post(
+    '/download',
+    loadPermsMw,
+    validateFilePayloadMw('read'),
+    asyncMiddleware(async (req: BPRequest & RequestWithPerms, res, next) => {
+      const buffer = await editor.forBot(req.params.botId).readFileBuffer(req.body)
 
-    res.setHeader('Content-Disposition', `attachment; filename=${req.body.name}`)
-    res.setHeader('Content-Type', 'application/octet-stream')
-    res.send(buffer)
-  })
+      res.setHeader('Content-Disposition', `attachment; filename=${req.body.name}`)
+      res.setHeader('Content-Type', 'application/octet-stream')
+      res.send(buffer)
+    })
+  )
 
-  router.post('/exists', loadPermsMw, validateFilePayloadMw('write'), async (req: RequestWithPerms, res, next) => {
-    try {
-      res.send(await editor.forBot(req.params.botId).fileExists(req.body))
-    } catch (err) {
-      next(err)
-    }
-  })
+  router.post(
+    '/exists',
+    loadPermsMw,
+    validateFilePayloadMw('write'),
+    asyncMiddleware(async (req: BPRequest & RequestWithPerms, res, next) => {
+      try {
+        res.send(await editor.forBot(req.params.botId).fileExists(req.body))
+      } catch (err) {
+        next(err)
+      }
+    })
+  )
 
   router.post(
     '/rename',

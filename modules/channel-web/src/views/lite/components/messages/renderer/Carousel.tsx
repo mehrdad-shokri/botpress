@@ -5,6 +5,19 @@ import Slider from 'react-slick'
 import '../../../../../../assets/slick/slick-theme.css'
 import '../../../../../../assets/slick/slick.css'
 import { Renderer } from '../../../typings'
+import { ProcessedText } from '../../../utils'
+
+const CarouselSkeleton = () => {
+  const common = { width: '100%', borderRadius: 5, padding: 10 }
+  const button = { height: 30, backgroundColor: '#ecebeb', marginTop: 10, ...common }
+  return (
+    <div className="bpw-carousel-skeleton" style={{ height: 380, backgroundColor: '#f3f3f3', ...common }}>
+      <div style={{ height: 280, backgroundColor: '#ecebeb', ...common }} />
+      <div style={button} />
+      <div style={button} />
+    </div>
+  )
+}
 
 export class Carousel extends React.Component<ICarouselProps, ICarouselState> {
   private ref
@@ -15,6 +28,12 @@ export class Carousel extends React.Component<ICarouselProps, ICarouselState> {
 
   componentDidMount() {
     this.setState({ adjustedWidth: this.ref.offsetWidth - window.innerWidth })
+    // Reset this to avoid incorrect values when closing-opening the webchat
+    setTimeout(() => {
+      this.setState({
+        adjustedWidth: this.ref.offsetWidth - window.innerWidth
+      })
+    }, 300)
   }
 
   renderCarousel() {
@@ -27,25 +46,29 @@ export class Carousel extends React.Component<ICarouselProps, ICarouselState> {
     const defaultSettings = {
       dots: false,
       infinite: false,
-      responsive: [
-        { breakpoint: adjustBreakpoint(550), settings: { slidesToShow: 1 } },
-        { breakpoint: adjustBreakpoint(1024), settings: { slidesToShow: 2 } },
-        { breakpoint: adjustBreakpoint(1548), settings: { slidesToShow: 3 } },
-        { breakpoint: adjustBreakpoint(2072), settings: { slidesToShow: 4 } },
-        { breakpoint: adjustBreakpoint(10000), settings: 'unslick' }
-      ],
+      responsive: [...Array(10)].map((_, i) => ({
+        breakpoint: adjustBreakpoint(550 + i * 524),
+        settings: { slidesToShow: i + 1 }
+      })), // Carousel will be responsive for screens as width as ~5300px
       slidesToScroll: 1,
       autoplay: false,
       centerMode: false,
       arrows: elements.length > 1
     }
 
-    const settings = Object.assign({}, defaultSettings, carousel.settings)
+    const settings = Object.assign({}, defaultSettings, carousel?.settings)
 
     return (
-      <Slider {...settings}>
+      <Slider key={this.state.adjustedWidth} {...settings}>
         {elements.map((el, idx) => (
-          <Card element={el} key={idx} onSendData={this.props.onSendData} />
+          <Card
+            element={el}
+            key={idx}
+            onSendData={this.props.onSendData}
+            escapeHTML={this.props.escapeHTML}
+            isBotMessage={this.props.isBotMessage}
+            intl={this.props.intl}
+          />
         ))}
       </Slider>
     )
@@ -54,22 +77,46 @@ export class Carousel extends React.Component<ICarouselProps, ICarouselState> {
   render() {
     return (
       <div ref={el => (this.ref = el)} style={{ width: '100%', ...this.props.style }}>
-        {this.state.adjustedWidth && this.renderCarousel()}
+        {(this.state.adjustedWidth && this.renderCarousel()) || <CarouselSkeleton />}
       </div>
     )
   }
 }
 
 export const Card = props => {
-  const { picture, title, subtitle, buttons } = props.element as Renderer.Card
+  const { picture, title, subtitle, buttons, markdown } = props.element as Renderer.Card
+  const { escapeHTML, intl } = props
 
   return (
     <div className={'bpw-card-container'}>
       {picture && <div className={'bpw-card-picture'} style={{ backgroundImage: `url("${picture}")` }} />}
       <div>
         <div className={'bpw-card-header'}>
-          <div className={'bpw-card-title'}>{title}</div>
-          {subtitle && <div className={'bpw-card-subtitle'}>{subtitle}</div>}
+          <ProcessedText
+            wrapperProps={{
+              className: 'bpw-card-title',
+              tag: 'div'
+            }}
+            isBotMessage={props.isBotMessage}
+            markdown={markdown}
+            escapeHTML={escapeHTML}
+          >
+            {title}
+          </ProcessedText>
+          {subtitle && (
+            <ProcessedText
+              wrapperProps={{
+                className: 'bpw-card-subtitle',
+                tag: 'div'
+              }}
+              isBotMessage={props.isBotMessage}
+              markdown={markdown}
+              escapeHTML={escapeHTML}
+              intl={props.intl}
+            >
+              {subtitle}
+            </ProcessedText>
+          )}
         </div>
         <div className={'bpw-card-buttons'}>
           {buttons.map((btn: Renderer.CardButton) => {
@@ -85,7 +132,7 @@ export const Card = props => {
                   {/^javascript:/.test(btn.url) ? null : <i className={'bpw-card-external-icon'} />}
                 </a>
               )
-            } else if (btn.type == 'postback' || btn.payload) {
+            } else if (btn.type === 'postback' || btn.payload) {
               return (
                 <a
                   onClick={props.onSendData?.bind(this, { type: 'postback', payload: btn.payload })}
@@ -95,7 +142,7 @@ export const Card = props => {
                   {btn.title || btn}
                 </a>
               )
-            } else if (btn.type == 'say_something' || btn.text) {
+            } else if (btn.type === 'say_something' || btn.text) {
               return (
                 <a
                   onClick={props.onSendData?.bind(this, { type: 'say_something', text: btn.text })}
@@ -124,6 +171,9 @@ interface ICarouselProps {
   carousel: Renderer.Carousel
   onSendData: any
   style?: object
+  escapeHTML: boolean
+  isBotMessage: boolean
+  intl: any
 }
 
 interface ICarouselState {

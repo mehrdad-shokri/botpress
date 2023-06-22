@@ -1,132 +1,8 @@
 const base = require('./_base')
-const path = require('path')
-const url = require('url')
-const { tail } = _
-
-function render(data) {
-  const events = []
-
-  if (data.typing) {
-    events.push({
-      type: 'typing',
-      value: data.typing
-    })
-  }
-
-  return [
-    ...events,
-    {
-      type: 'file',
-      title: data.title,
-      url: `${data.BOT_URL}${data.image}`,
-      collectFeedback: data.collectFeedback
-    }
-  ]
-}
-
-function renderMessenger(data) {
-  const events = []
-
-  if (data.typing) {
-    events.push({
-      type: 'typing',
-      value: data.typing
-    })
-  }
-
-  return [
-    ...events,
-    {
-      attachment: {
-        type: 'image',
-        payload: {
-          is_reusable: true,
-          url: `${data.BOT_URL}${data.image}`
-        }
-      }
-    }
-  ]
-}
-
-function renderTelegram(data) {
-  const events = []
-
-  if (data.typing) {
-    events.push({
-      type: 'typing',
-      value: data.typing
-    })
-  }
-
-  return [
-    ...events,
-    {
-      type: 'image',
-      url: `${data.BOT_URL}${data.image}`
-    }
-  ]
-}
-
-function renderSlack(data) {
-  const events = []
-
-  if (data.typing) {
-    events.push({
-      type: 'typing',
-      value: data.typing
-    })
-  }
-
-  return [
-    ...events,
-    {
-      type: 'image',
-      title: data.title && {
-        type: 'plain_text',
-        text: data.title
-      },
-      image_url: `${data.BOT_URL}${data.image}`,
-      alt_text: 'image'
-    }
-  ]
-}
-
-function renderTeams(data) {
-  const events = []
-
-  if (data.typing) {
-    events.push({
-      type: 'typing'
-    })
-  }
-
-  return [
-    ...events,
-    {
-      type: 'message',
-      attachments: [
-        {
-          name: data.title,
-          contentType: 'image/png',
-          contentUrl: `${data.BOT_URL}${data.image}`
-        }
-      ]
-    }
-  ]
-}
+const utils = require('./_utils')
 
 function renderElement(data, channel) {
-  if (channel === 'messenger') {
-    return renderMessenger(data)
-  } else if (channel === 'telegram') {
-    return renderTelegram(data)
-  } else if (channel === 'slack') {
-    return renderSlack(data)
-  } else if (channel === 'teams') {
-    return renderTeams(data)
-  } else {
-    return render(data)
-  }
+  return utils.extractPayload('image', data)
 }
 
 module.exports = {
@@ -141,7 +17,7 @@ module.exports = {
     properties: {
       image: {
         type: 'string',
-        $subtype: 'media',
+        $subtype: 'image',
         $filter: '.jpg, .png, .jpeg, .gif, .bmp, .tif, .tiff|image/*',
         title: 'module.builtin.types.image.title'
       },
@@ -165,13 +41,15 @@ module.exports = {
       return
     }
 
-    let fileName = path.basename(formData.image)
-    if (fileName.includes('-')) {
-      fileName = tail(fileName.split('-')).join('-')
-    }
-    const link = `${formData.BOT_URL}${formData.image}`
+    const link = utils.formatURL(formData.BOT_URL, formData.image)
     const title = formData.title ? ' | ' + formData.title : ''
-    return `Image: [![${formData.title || ''}](<${link}>)](<${link}>) - (${fileName}) ${title}`
+
+    if (utils.isUrl(link)) {
+      const fileName = utils.extractFileName(formData.image)
+      return `Image: [![${formData.title || ''}](<${link}>)](<${link}>) - (${fileName}) ${title}`
+    } else {
+      return `Expression: ${link}${title}`
+    }
   },
 
   renderElement: renderElement

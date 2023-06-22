@@ -11,9 +11,18 @@ export const FileMessage = (props: Renderer.FileMessage) => {
     return null
   }
 
-  const { url, name, storage, text } = props.file
+  const { url, title, storage, text } = props.file
 
-  const extension = path.extname(url)
+  let extension = ''
+  try {
+    const validUrl = new URL(url)
+
+    extension = validUrl.pathname
+  } catch (error) {
+    // Try using path.extname since url might be relative.
+    extension = path.extname(url)
+  }
+
   const mime = mimeTypes.getType(extension)
 
   if (text) {
@@ -23,17 +32,7 @@ export const FileMessage = (props: Renderer.FileMessage) => {
   if (storage === 'local') {
     return (
       <div className={'bpw-file-message'}>
-        <div>{name} (local)</div>
-      </div>
-    )
-  }
-
-  if (!mime) {
-    return (
-      <div className={'bpw-file-message'}>
-        <a href={url} target={'_blank'}>
-          {name}
-        </a>
+        <div>{title} (local)</div>
       </div>
     )
   }
@@ -41,7 +40,7 @@ export const FileMessage = (props: Renderer.FileMessage) => {
   if (mime.includes('image/')) {
     return (
       <a href={url} target={'_blank'}>
-        <img src={url} title={name} />
+        <img src={url} title={title} />
       </a>
     )
   } else if (mime.includes('audio/')) {
@@ -52,9 +51,18 @@ export const FileMessage = (props: Renderer.FileMessage) => {
     )
   } else if (mime.includes('video/')) {
     return (
-      <video width={240} controls>
+      <video controls>
         <source src={url} type={mime} />
       </video>
+    )
+  } else {
+    return (
+      <div>
+        <span>File: </span>
+        <a href={url} target={'_blank'}>
+          {title || url}
+        </a>
+      </div>
     )
   }
 }

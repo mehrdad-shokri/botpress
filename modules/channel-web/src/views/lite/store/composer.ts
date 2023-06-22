@@ -16,6 +16,12 @@ class ComposerStore {
   public message: string = ''
 
   @observable
+  public locked: boolean = false
+
+  @observable
+  public hidden: boolean = false
+
+  @observable
   private _sentHistory: string[] = []
 
   @observable
@@ -25,13 +31,18 @@ class ComposerStore {
     this.rootStore = rootStore
 
     if (window.BP_STORAGE) {
-      this._sentHistory = JSON.parse(window.BP_STORAGE.get(SENT_HISTORY_KEY) || '[]')
+      this._sentHistory = window.BP_STORAGE.get<string[]>(SENT_HISTORY_KEY) || []
     }
   }
 
   @computed
   get composerPlaceholder(): string {
     return this.rootStore.config?.composerPlaceholder
+  }
+
+  @computed
+  get composerMaxTextLength(): number {
+    return this.rootStore.botInfo?.maxMessageLength
   }
 
   @action.bound
@@ -46,10 +57,7 @@ class ComposerStore {
       this._sentHistoryIndex = 0
 
       if (this.rootStore.config.enablePersistHistory) {
-        window.BP_STORAGE?.set(
-          SENT_HISTORY_KEY,
-          JSON.stringify(takeRight(this._sentHistory, constants.SENT_HISTORY_SIZE))
-        )
+        window.BP_STORAGE?.set(SENT_HISTORY_KEY, takeRight(this._sentHistory, constants.SENT_HISTORY_SIZE))
       }
     }
   }
@@ -70,6 +78,16 @@ class ComposerStore {
 
     this.updateMessage(this._sentHistory[newIndex])
     this._sentHistoryIndex = newIndex
+  }
+
+  @action.bound
+  setLocked(locked: boolean) {
+    this.locked = !!locked
+  }
+
+  @action.bound
+  setHidden(hidden: boolean) {
+    this.hidden = hidden
   }
 }
 

@@ -23,7 +23,7 @@ export default async (argv: any) => {
   normal('Build completed')
 }
 
-export async function buildBackend(modulePath: string) {
+export async function buildBackend(modulePath: string): Promise<void> {
   const start = Date.now()
 
   let babelConfig: babel.TransformOptions = {
@@ -60,6 +60,9 @@ export async function buildBackend(modulePath: string) {
   const tsConfigFile = ts.findConfigFile(modulePath, ts.sys.fileExists, 'tsconfig.json')
   const skipCheck = process.argv.find(x => x.toLowerCase() === '--skip-check')
 
+  // By default you don't want it to fail when watching, hence the flag
+  const failOnError = process.argv.find(x => x.toLowerCase() === '--fail-on-error')
+
   let validCode = true
   if (!skipCheck && tsConfigFile) {
     validCode = runTypeChecker(modulePath)
@@ -72,6 +75,8 @@ export async function buildBackend(modulePath: string) {
     compileBackend(modulePath, babelConfig)
 
     normal(`Generated backend (${Date.now() - start} ms)`, path.basename(modulePath))
+  } else if (failOnError) {
+    process.exit(1)
   }
 }
 
@@ -109,8 +114,8 @@ const compileBackend = (modulePath: string, babelConfig) => {
     ignore: ['**/*.d.ts', '**/views/**/*.*', '**/config.ts']
   })
 
-  const copyWithoutTransform = ['actions', 'hooks', 'examples', 'content-types']
-  const outputFiles = []
+  const copyWithoutTransform = ['actions', 'hooks', 'examples', 'content-types', 'bot-templates']
+  const outputFiles: string[] = []
 
   for (const file of files) {
     const dest = file.replace(/^src\//i, 'dist/').replace(/\.ts$/i, '.js')
@@ -124,9 +129,13 @@ const compileBackend = (modulePath: string, babelConfig) => {
     try {
       const dBefore = Date.now()
       const result = babel.transformFileSync(file, babelConfig)
-      const destMap = dest + '.map'
+      const destMap = `${dest}.map`
 
-      fs.writeFileSync(dest, result.code + os.EOL + `//# sourceMappingURL=${path.basename(destMap)}`)
+      if (!result?.map) {
+        return
+      }
+
+      fs.writeFileSync(dest, `${result.code}${os.EOL}//# sourceMappingURL=${path.basename(destMap)}`)
       result.map.sources = [path.relative(babelConfig.sourceRoot, file)]
       fs.writeFileSync(destMap, JSON.stringify(result.map))
 
@@ -177,7 +186,7 @@ const getTsConfig = (rootFolder: string): ts.ParsedCommandLine => {
   }
 
   const configFileName = ts.findConfigFile(rootFolder, ts.sys.fileExists, 'tsconfig.json')
-  const { config } = ts.readConfigFile(configFileName, ts.sys.readFile)
+  const { config } = ts.readConfigFile(configFileName!, ts.sys.readFile)
 
   // These 3 objects are identical for all modules, but can't be in tsconfig.shared because the root folder is not processed correctly
   const fixedModuleConfig = {
@@ -187,7 +196,7 @@ const getTsConfig = (rootFolder: string): ts.ParsedCommandLine => {
       typeRoots: ['./node_modules/@types', './node_modules', './src/typings']
     },
     exclude: ['**/*.test.ts', './src/views/**', '**/node_modules/**'],
-    include: ['../../src/typings/*.d.ts', '**/*.ts']
+    include: ['../../packages/bp/src/typings/*.d.ts', '**/*.ts']
   }
 
   return ts.parseJsonConfigFileContent(fixedModuleConfig, parseConfigHost, rootFolder)

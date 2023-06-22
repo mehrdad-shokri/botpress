@@ -14,7 +14,7 @@ import {
 // @ts-ignore
 import ContentPickerWidget from 'botpress/content-picker'
 import _ from 'lodash'
-import nanoid from 'nanoid/generate'
+import { customAlphabet } from 'nanoid'
 import React from 'react'
 
 import style from './style.scss'
@@ -34,6 +34,7 @@ interface ChoiceConfig {
   nbMaxRetries: number
   repeatChoicesOnInvalid: boolean
   contentElement: string
+  variableName: string
 }
 
 interface State {
@@ -52,13 +53,14 @@ export class Choice extends React.Component<SkillProps<ChoiceData> & { bp: any }
   state: State = {
     tab: 'basic',
     keywords: {},
-    randomId: nanoid('abcdefghijklmnopqrstuvwxyz0123456789', 10),
+    randomId: customAlphabet('abcdefghijklmnopqrstuvwxyz0123456789', 10)(),
     contentId: '',
     invalidContentId: '',
     config: {
       nbMaxRetries: 3,
       repeatChoicesOnInvalid: false,
-      contentElement: undefined
+      contentElement: undefined,
+      variableName: ''
     },
     defaultConfig: undefined
   }
@@ -87,7 +89,7 @@ export class Choice extends React.Component<SkillProps<ChoiceData> & { bp: any }
     const id = this.state.contentId
 
     if (id && id.length) {
-      const res = await this.props.bp.axios.get(`/content/element/${id}`)
+      const res = await this.props.bp.axios.get(`/cms/element/${id}`, { baseURL: window['STUDIO_API_PATH'] })
       return this.onContentChanged(res.data, true)
     }
   }
@@ -154,7 +156,7 @@ export class Choice extends React.Component<SkillProps<ChoiceData> & { bp: any }
         }
         return acc
       }, {})
-      this.setState({ contentId: element.id, keywords: keywords })
+      this.setState({ contentId: element.id, keywords })
     }
   }
 
@@ -225,6 +227,20 @@ export class Choice extends React.Component<SkillProps<ChoiceData> & { bp: any }
       : this.state.defaultConfig && this.state.defaultConfig.defaultContentElement
   }
 
+  getVariableName() {
+    const { variableName } = this.state.config
+    return variableName ? variableName : ''
+  }
+
+  handleBlurVariableName() {
+    const { variableName } = this.state.config
+    const config = {
+      ...this.state.config,
+      variableName: variableName && variableName.length ? variableName : this.state.randomId
+    }
+    this.setState({ config })
+  }
+
   getNbRetries() {
     if (this.state.config.nbMaxRetries !== undefined || this.state.config.nbMaxRetries !== null) {
       return this.state.config.nbMaxRetries
@@ -252,6 +268,15 @@ export class Choice extends React.Component<SkillProps<ChoiceData> & { bp: any }
             max={10}
             onValueChange={this.onMaxRetriesChanged}
             value={this.getNbRetries()}
+          />
+        </FormGroup>
+
+        <FormGroup label="Variable Name">
+          <InputGroup
+            id="variableName"
+            value={this.getVariableName()}
+            onChange={this.handleConfigTextChanged('variableName')}
+            onBlur={this.handleBlurVariableName.bind(this)}
           />
         </FormGroup>
 

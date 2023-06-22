@@ -1,12 +1,12 @@
 import axios from 'axios'
 import * as sdk from 'botpress/sdk'
 import _ from 'lodash'
-import generate from 'nanoid/generate'
+import { customAlphabet } from 'nanoid'
 
 import { bots as mountedBots, conditions } from '.'
 import { DEFAULT_MIN_CONFIDENCE, UnderstandingEngine } from './ndu-engine'
 
-const prettyId = (length = 10) => generate('1234567890abcdef', length)
+const prettyId = (length = 10) => customAlphabet('1234567890abcdef', length)()
 const debug = DEBUG('ndu').sub('migrate')
 
 interface TemplateFile {
@@ -15,7 +15,7 @@ interface TemplateFile {
   buffer: string | Buffer
 }
 
-type FlowNodeView = {
+interface FlowNodeView {
   nodes: {
     id: string
     position: { x: number; y: number }
@@ -24,10 +24,10 @@ type FlowNodeView = {
 
 const addTriggersToListenNodes = (flow: sdk.Flow, flowPath: string) => {
   for (const node of flow.nodes) {
-    if (node.onReceive != undefined) {
+    if (node.onReceive != null) {
       const listenNode = (node as unknown) as sdk.ListenNode
       if (!listenNode.triggers?.length) {
-        debug(`Add triggers property to node %o`, { flow: flowPath, node: node.name })
+        debug('Add triggers property to node %o', { flow: flowPath, node: node.name })
         listenNode.triggers = [{ conditions: [{ id: 'always' }] }]
       }
     }
@@ -41,7 +41,6 @@ const addSuccessFailureNodes = (flow: sdk.Flow, flowPath: string, flowUi: FlowNo
       id,
       name: type,
       onEnter: [],
-      // tslint:disable-next-line: no-null-keyword
       onReceive: null,
       next: [],
       type
@@ -87,7 +86,7 @@ const upsertNewFlows = async (ghost: sdk.ScopedGhostService, files: TemplateFile
 
     if (!(await ghost.fileExists(`flows/${topic}`, flowName))) {
       await ghost.upsertFile(`flows/${topic}`, flowName, flow.buffer)
-      debug(`Flow file missing, creating %o`, { topic, flow: flowName })
+      debug('Flow file missing, creating %o', { topic, flow: flowName })
     }
   }
 }
@@ -100,7 +99,7 @@ const createMissingElements = async (bp: typeof sdk, botId, files: TemplateFile[
 
     for (const element of content) {
       if (!(await bp.cms.getContentElement(botId, element.id))) {
-        debug(`Missing content element, creating... %o`, { element: element.id, type: contentType })
+        debug('Missing content element, creating... %o', { element: element.id, type: contentType })
         await bp.cms.createOrUpdateContentElement(botId, contentType, element.formData, element.id)
       }
     }
@@ -131,14 +130,14 @@ const getIntentContexts = async (ghost: sdk.ScopedGhostService) => {
 
 const createTopicsFromContexts = async (bp: typeof sdk, ghost: sdk.ScopedGhostService, botId: string) => {
   try {
-    const axiosConfig = await bp.http.getAxiosConfigForBot(botId, { localUrl: true })
+    const axiosConfig = await bp.http.getAxiosConfigForBot(botId, { localUrl: true, studioUrl: true })
 
     const contexts = await getIntentContexts(ghost)
     const { data: existingTopics } = await axios.get('/topics', axiosConfig)
 
     for (const topic of contexts) {
       if (!existingTopics?.find(x => x.name === topic)) {
-        await axios.post('/topic', { name: topic, description: '' }, axiosConfig)
+        await axios.post('/topics', { name: topic, description: '' }, axiosConfig)
         debug(`Created a new topic for existing NLU context ${topic}`)
       }
     }
@@ -146,7 +145,7 @@ const createTopicsFromContexts = async (bp: typeof sdk, ghost: sdk.ScopedGhostSe
     bp.logger
       .forBot(botId)
       .attachError(err)
-      .warn(`Couldn't create topics from context.`)
+      .warn("Couldn't create topics from context.")
   }
 }
 

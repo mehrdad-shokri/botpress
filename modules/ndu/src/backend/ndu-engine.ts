@@ -6,6 +6,8 @@ import _ from 'lodash'
 import { Config } from '../config'
 
 import { BASE_DATA } from './base-data'
+import MLToolkit from './ml/toolkit'
+import { MLToolkit as IMLToolkit } from './ml/typings'
 import { Features } from './typings'
 
 const debug = DEBUG('ndu').sub('processing')
@@ -72,11 +74,11 @@ export class UnderstandingEngine {
   private _allTriggers: Map<string, sdk.NDU.Trigger[]> = new Map()
   private _minConfidence: number
 
-  trainer: sdk.MLToolkit.SVM.Trainer
-  predictor: sdk.MLToolkit.SVM.Predictor
+  trainer: IMLToolkit.SVM.Trainer
+  predictor: IMLToolkit.SVM.Predictor
 
   constructor(private bp: typeof sdk, private _dialogConditions: sdk.Condition[], config: Config) {
-    this.trainer = new this.bp.MLToolkit.SVM.Trainer()
+    this.trainer = new MLToolkit.SVM.Trainer()
     this._minConfidence = config.minimumConfidence ?? DEFAULT_MIN_CONFIDENCE
   }
 
@@ -108,7 +110,7 @@ export class UnderstandingEngine {
   queryQna = async (intentName: string, event): Promise<sdk.NDU.Actions[]> => {
     try {
       const axiosConfig = await this.bp.http.getAxiosConfigForBot(event.botId, { localUrl: true })
-      const { data } = await axios.post('/mod/qna/intentActions', { intentName, event }, axiosConfig)
+      const { data } = await axios.post('/qna/intentActions', { intentName, event }, axiosConfig)
       const redirect: sdk.NDU.Actions[] = data.filter(a => a.action !== 'redirect')
       // TODO: Warn that REDIRECTS should be migrated over to flow nodes triggers
       return redirect
@@ -123,7 +125,8 @@ export class UnderstandingEngine {
       const data = dataset.map(([feat, label]) => ({ label, coordinates: this.featToVec(feat) }))
       const duplicatedArray = _.shuffle(_.flatten(_.times(10, () => data)))
       const model = await this.trainer.train(duplicatedArray)
-      this.predictor = new this.bp.MLToolkit.SVM.Predictor(model)
+      this.predictor = new MLToolkit.SVM.Predictor(model)
+      await this.predictor.initialize()
     }
   }
 
@@ -472,14 +475,14 @@ export class UnderstandingEngine {
     for (const faq of faqs) {
       for (const topicName of faq.contexts) {
         triggers.push(<sdk.NDU.FaqTrigger>{
-          topicName: topicName,
+          topicName,
           conditions: [
             {
               id: 'user_intent_is',
 
               params: {
                 intentName: faq.name,
-                topicName: topicName
+                topicName
               }
             }
           ],

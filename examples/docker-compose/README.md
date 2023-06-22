@@ -1,14 +1,16 @@
 # Docker Compose
 
 Those examples allows you to kickstart quickly an installation with all the working pieces together.
-There are 4 different setup:
+There are 4 different setups:
 
 - Community (you can access all services on designed ports)
 - Community with nginx (you can only access the bot via nginx, port 80)
+- Community with nginx and https (you can only access the bot via nginx, 443)
 - Pro
 - Pro with nginx
+- Basic installation of botpress with docker.
 
-The nginx configuration doesn't include settings for SSL, but those are available on the documentation
+The nginx configuration doesn't include settings for SSL termination, but those are available in the documentation.
 
 Volumes are already configured and your files will be available under the folder botpress/
 
@@ -29,6 +31,7 @@ Volumes are already configured and your files will be available under the folder
 | Postgres Database | 5435 |         Yes         |
 
 Command: docker-compose -f docker-compose-community.yaml up --build
+
 Open URL: http://localhost:3000
 
 ### Community (with nginx)
@@ -42,6 +45,7 @@ Open URL: http://localhost:3000
 |       NGINX       |  80  |         Yes         |
 
 Command: docker-compose -f docker-compose-community-nginx.yaml up --build
+
 Open URL: http://localhost:80
 
 ### Pro
@@ -55,6 +59,7 @@ Open URL: http://localhost:80
 |   Redis Server    | 6379 |         Yes         |
 
 Command: docker-compose -f docker-compose-pro.yaml up --build
+
 Open URL: http://localhost:3000
 
 ### Pro (with nginx)
@@ -69,4 +74,5 @@ Open URL: http://localhost:3000
 |       NGINX       |  80  |         Yes         |
 
 Command: docker-compose -f docker-compose-pro-nginx.yaml up --build
+
 Open URL: http://localhost:80

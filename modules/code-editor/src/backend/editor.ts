@@ -17,8 +17,6 @@ import {
   RAW_TYPE
 } from './utils'
 
-export const FILENAME_REGEX = /^[0-9a-zA-Z_\-.]+$/
-
 const RAW_FILES_FILTERS = ['**/*.map', 'modules/.cache/**/*', 'modules/*.cache', 'modules/*.temp_cache']
 
 export default class Editor {
@@ -97,17 +95,22 @@ export default class Editor {
 
   async loadFiles(fileTypeId: string, botId?: string, listBuiltin?: boolean): Promise<EditableFile[]> {
     const def: FileDefinition = FileTypes[fileTypeId]
-    const { baseDir, dirListingAddFields } = def.ghost
+    const { baseDir, dirListingAddFields, dirListingExcluded } = def.ghost
 
     if ((!def.allowGlobal && !botId) || (!def.allowScoped && botId)) {
       return []
     }
 
-    const excluded = this._config.includeBuiltin || listBuiltin ? undefined : getBuiltinExclusion()
+    let fileExt = '*.*'
+    if (def.isJSON !== undefined) {
+      fileExt = def.isJSON ? '*.json' : '*.js'
+    }
+
+    const baseExcluded = this._config.includeBuiltin || listBuiltin ? [] : getBuiltinExclusion()
+    const excluded = [...baseExcluded, ...(dirListingExcluded ?? [])]
+
     const ghost = botId ? this.bp.ghost.forBot(botId) : this.bp.ghost.forGlobal()
-    const files = def.filenames
-      ? def.filenames
-      : await ghost.directoryListing(baseDir, def.isJSON ? '*.json' : '*.js', excluded, true)
+    const files = def.filenames ? def.filenames : await ghost.directoryListing(baseDir, fileExt, excluded, true)
 
     return Promise.map(files, async (filepath: string) => ({
       name: path.basename(filepath),
@@ -156,9 +159,7 @@ export default class Editor {
   }
 
   async renameFile(file: EditableFile, newName: string): Promise<void> {
-    if (file.type !== RAW_TYPE) {
-      assertValidFilename(newName)
-    }
+    assertValidFilename(newName)
 
     const { folder, filename } = getFileLocation(file)
     const newFilename = filename.replace(filename, newName)
@@ -172,30 +173,48 @@ export default class Editor {
     return ghost.renameFile(folder, filename, newFilename)
   }
 
+  async readFile(name: string, filePath: string) {
+    let fileContent = ''
+    try {
+      const typings = fs.readFileSync(filePath, 'utf-8')
+
+      fileContent = typings.toString()
+      if (name === 'botpress.d.ts') {
+        fileContent = fileContent.replace("'botpress/sdk'", 'sdk')
+      }
+    } catch (err) {
+      this.bp.logger.warn(`Couldn't load file ${filePath} `)
+    }
+
+    return { name, fileContent }
+  }
+
   async loadTypings() {
     if (this._typings) {
       return this._typings
     }
 
-    const sdkTyping = fs.readFileSync(path.join(__dirname, '/../botpress.d.js'), 'utf-8')
-    const nodeTyping = fs.readFileSync(path.join(__dirname, `/../typings/node.d.txt`), 'utf-8')
-
     const ghost = this.bp.ghost.forRoot()
     const botConfigSchema = await ghost.readFileAsString('/', 'bot.config.schema.json')
     const botpressConfigSchema = await ghost.readFileAsString('/', 'botpress.config.schema.json')
 
-    // Required so array.includes() can be used without displaying an error
-    const es6include = fs.readFileSync(path.join(__dirname, '/../typings/es6include.txt'), 'utf-8')
-
     const moduleTypings = await this.getModuleTypings()
+
+    const files = [
+      { name: 'node.d.ts', location: path.join(__dirname, '/../typings/node.d.txt') },
+      { name: 'botpress.d.ts', location: path.join(__dirname, '/../botpress.d.js') },
+      // Required so array.includes() can be used without displaying an error
+      { name: 'es6include.d.ts', location: path.join(__dirname, '/../typings/es6include.txt') }
+    ]
+
+    const content = await Promise.mapSeries(files, file => this.readFile(file.name, file.location))
+    const localTypings = _.mapValues(_.keyBy(content, 'name'), 'fileContent')
 
     this._typings = {
       'process.d.ts': buildRestrictedProcessVars(),
-      'node.d.ts': nodeTyping.toString(),
-      'botpress.d.ts': sdkTyping.toString().replace(`'botpress/sdk'`, `sdk`),
       'bot.config.schema.json': botConfigSchema,
       'botpress.config.schema.json': botpressConfigSchema,
-      'es6include.d.ts': es6include.toString(),
+      ...localTypings,
       ...moduleTypings
     }
 

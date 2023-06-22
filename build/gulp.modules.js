@@ -43,8 +43,8 @@ const buildModule = (modulePath, cb) => {
   const targetOs = getTargetOSConfig()
   const linkCmd = process.env.LINK ? `&& yarn link "module-builder"` : ''
   const buildCommand = process.argv.find(x => x.toLowerCase() === '--prod')
-    ? `cross-env NODE_ENV=production yarn build --nomap`
-    : 'yarn build'
+    ? `cross-env NODE_ENV=production yarn build --nomap --fail-on-error`
+    : 'yarn build --fail-on-error'
 
   exec(
     `cross-env npm_config_target_platform=${targetOs} yarn ${linkCmd} && ${buildCommand}`,
@@ -68,7 +68,7 @@ Output: ${stdout}`
 
 const packageModule = (modulePath, cb) => {
   exec(
-    `node ../../build/module-builder/bin/entry package -v --out ../../out/binaries/modules/%name%.tgz`,
+    `node ../../build/module-builder/bin/entry package -v --out ../../packages/bp/binaries/modules/%name%.tgz`,
     { cwd: modulePath },
     (err, stdout, stderr) => {
       if (err) {
@@ -93,7 +93,21 @@ const buildModuleBuilder = cb => {
 }
 
 const buildModules = () => {
-  const modules = getAllModulesRoot()
+  const allModules = getAllModulesRoot()
+
+  const command = process.argv[process.argv.length - 2]
+  const moduleArgs = process.argv[process.argv.length - 1].split(',')
+
+  let moduleFilter = m => true
+  if (command === '--m') {
+    moduleFilter = m => moduleArgs.includes(m)
+  } else if (command === '--a') {
+    // if command="--a nlu" we match nlu, nlu-testing and nlu-extras
+    moduleFilter = m => moduleArgs.some(arg => !!m.match(new RegExp(`${arg}`)))
+  }
+
+  const modules = allModules.filter(m => moduleFilter(path.basename(m)))
+
   const tasks = modules.map(m => {
     const config = readModuleConfig(m)
     const moduleName = _.get(config, 'name', 'Unknown')
@@ -112,8 +126,22 @@ const buildModules = () => {
 }
 
 const packageModules = () => {
-  mkdirp.sync('out/binaries/modules')
-  const modules = getAllModulesRoot()
+  mkdirp.sync('packages/bp/binaries/modules')
+  const allModules = getAllModulesRoot()
+
+  const command = process.argv[process.argv.length - 2]
+  const moduleArgs = process.argv[process.argv.length - 1].split(',')
+
+  let moduleFilter = m => true
+  if (command === '--m') {
+    moduleFilter = m => moduleArgs.includes(m)
+  } else if (command === '--a') {
+    // if command="--a nlu" we match nlu, nlu-testing and nlu-extras
+    moduleFilter = m => moduleArgs.some(arg => !!m.match(new RegExp(`${arg}`)))
+  }
+
+  const modules = allModules.filter(m => moduleFilter(path.basename(m)))
+
   const tasks = modules.map(m => {
     const config = readModuleConfig(m)
     const moduleName = _.get(config, 'name', 'Unknown')
@@ -138,7 +166,7 @@ const build = () => {
 
 const cleanModuleAssets = () => {
   const moduleName = _.last(process.argv)
-  return gulp.src(`./out/bp/data/assets/modules/${moduleName}`, { allowEmpty: true }).pipe(rimraf())
+  return gulp.src(`./packages/bp/dist/data/assets/modules/${moduleName}`, { allowEmpty: true }).pipe(rimraf())
 }
 
 const createModuleSymlink = () => {
@@ -146,7 +174,7 @@ const createModuleSymlink = () => {
   const moduleName = _.last(process.argv)
   return gulp
     .src(`./${moduleFolder}/${moduleName}/assets/`)
-    .pipe(symlink(`./out/bp/data/assets/modules/${moduleName}/`, { type: 'dir' }))
+    .pipe(symlink(`./packages/bp/dist/data/assets/modules/${moduleName}/`, { type: 'dir' }))
 }
 
 const createAllModulesSymlink = () => {
@@ -160,11 +188,11 @@ const createAllModulesSymlink = () => {
     gulp.task(
       taskName,
       gulp.series(
-        () => gulp.src(`./out/bp/data/assets/modules/${moduleName}`, { allowEmpty: true }).pipe(rimraf()),
+        () => gulp.src(`./packages/bp/dist/data/assets/modules/${moduleName}`, { allowEmpty: true }).pipe(rimraf()),
         () =>
           gulp
             .src(`./${moduleFolder}/${moduleName}/assets/`)
-            .pipe(symlink(`./out/bp/data/assets/modules/${moduleName}/`, { type: 'dir' }))
+            .pipe(symlink(`./packages/bp/dist/data/assets/modules/${moduleName}/`, { type: 'dir' }))
       )
     )
 
@@ -200,10 +228,10 @@ Example: 'yarn watch:modules --m channel-web,nlu,qna' or 'yarn watch:modules --a
 
   modules.forEach(moduleName => {
     try {
-      gulp.src(`./out/bp/data/assets/modules/${moduleName}`, { allowEmpty: true }).pipe(rimraf())
+      gulp.src(`./packages/bp/dist/data/assets/modules/${moduleName}`, { allowEmpty: true }).pipe(rimraf())
       gulp
         .src(`./modules/${moduleName}/assets/`)
-        .pipe(symlink(`./out/bp/data/assets/modules/${moduleName}/`, { type: 'dir' }))
+        .pipe(symlink(`./packages/bp/dist/data/assets/modules/${moduleName}/`, { type: 'dir' }))
     } catch (err) {
       console.log('Cant create symlink for', moduleName)
     }

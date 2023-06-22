@@ -1,4 +1,7 @@
-import {
+import { ModuleUI } from 'botpress/shared'
+import React from 'react'
+
+const {
   Container,
   InfoTooltip,
   Item,
@@ -9,8 +12,7 @@ import {
   SidePanel,
   SidePanelSection,
   SplashScreen
-} from 'botpress/ui'
-import React from 'react'
+} = ModuleUI
 
 // This view is a sample including all the features of Botpress UI
 export default class MyMainView extends React.Component {
@@ -19,11 +21,11 @@ export default class MyMainView extends React.Component {
     loaded: false
   }
 
-  handleItemSelected = (item: Item) => console.log('Selected object:', item)
-  handleSearchChanged = value => console.log(value)
-  handleSearchClicked = () => console.log('Search clicked')
-  handleContextClicked = item => console.log('Item: ', item)
-  test = () => console.log('clicked button')
+  handleItemSelected = (item: Item) => console.info('Selected object:', item)
+  handleSearchChanged = value => console.info(value)
+  handleSearchClicked = () => console.info('Search clicked')
+  handleContextClicked = item => console.info('Item: ', item)
+  test = () => console.info('clicked button')
 
   render() {
     const actions: SectionAction[] = [

@@ -1,3 +1,6 @@
+import truncate from 'html-truncate'
+import React from 'react'
+import Children from 'react-children-utilities'
 import ReactGA from 'react-ga'
 import snarkdown from 'snarkdown'
 
@@ -9,6 +12,8 @@ export const getOverridedComponent = (overrides, componentName) => {
     }
   }
 }
+
+export const isIE = window.navigator.userAgent.match(/MSIE|Trident/) !== null
 
 export const asyncDebounce = async timeMs => {
   let lastClickInMs = undefined
@@ -44,7 +49,7 @@ export const checkLocationOrigin = () => {
   if (!window.location.origin) {
     const { protocol, hostname, port } = window.location
     // @ts-ignore
-    window.location.origin = `${protocol}//${hostname}${port && ':' + port}`
+    window.location.origin = `${protocol}//${hostname}${port && `:${port}`}`
   }
 }
 
@@ -61,7 +66,7 @@ export const initializeAnalytics = () => {
       // @ts-ignore
       ReactGA.pageview(window.location.pathname + window.location.search)
     } catch (err) {
-      console.log('Error init analytics', err)
+      console.error('Error init analytics', err)
     }
   }
 }
@@ -90,5 +95,111 @@ export const renderUnsafeHTML = (message: string = '', escaped: boolean): string
   }
 
   const html = snarkdown(message)
-  return html.replace(/<a href/gi, `<a target="_blank" href`)
+  return html.replace(/<a href/gi, '<a target="_blank" href')
+}
+
+const rtlLocales = [
+  'ae' /* Avestan */,
+  'ar' /* 'العربية', Arabic */,
+  'arc' /* Aramaic */,
+  'bcc' /* 'بلوچی مکرانی', Southern Balochi */,
+  'bqi' /* 'بختياري', Bakthiari */,
+  'ckb' /* 'Soranî / کوردی', Sorani */,
+  'dv' /* Dhivehi */,
+  'fa' /* 'فارسی', Persian */,
+  'glk' /* 'گیلکی', Gilaki */,
+  'he' /* 'עברית', Hebrew */,
+  'ku' /* 'Kurdî / كوردی', Kurdish */,
+  'mzn' /* 'مازِرونی', Mazanderani */,
+  'nqo' /* N'Ko */,
+  'pnb' /* 'پنجابی', Western Punjabi */,
+  'ps' /* 'پښتو', Pashto, */,
+  'sd' /* 'سنڌي', Sindhi */,
+  'ug' /* 'Uyghurche / ئۇيغۇرچە', Uyghur */,
+  'ur' /* 'اردو', Urdu */,
+  'yi' /* 'ייִדיש', Yiddish */
+]
+
+// 'en-US' becomes ['en', '-us'] 'en' becomes ['en']
+const localeRegex = /^([a-zA-Z]*)([_\-a-zA-Z]*)$/
+
+export const isRTLLocale = (locale: string | undefined | null): boolean => {
+  if (!locale) {
+    return false
+  }
+  locale = locale.toLowerCase()
+  const matches = localeRegex.exec(locale)
+
+  if (!matches) {
+    return false
+  }
+
+  return rtlLocales.includes(matches[1])
+}
+
+export const isRTLText = new RegExp(
+  '[' +
+    [
+      '\u0600-\u06FF', // Arabic
+      '\u0750-\u077F', // Arabic Supplement
+      '\u08A0-\u08FF', // Arabic Extended-A
+      '\u0870-\u089F', // Arabic Extended-B
+      '\uFB50-\uFDFF', // Arabic Pres. Forms-A
+      '\uFE70-\uFEFF', // Arabic Pres. Forms-B
+      '\u0780-\u07BF', // Thaana (Dhivehi)
+      '\u0590-\u05FF', // Hebrew
+      '\uFB1D-\uFB4F', // Hebrew Presentation Forms
+      '\u07C0-\u07FF' // N'Ko
+    ].join('') +
+    ']'
+)
+
+export const ProcessedText = (props: {
+  markdown?: boolean
+  escapeHTML?: boolean
+  isBotMessage: boolean
+  maxLength?: number
+  intl?: any
+  showMore?: boolean
+  wrapperProps?: any & { tag: string }
+  children?: string
+}) => {
+  let message
+  let hasShowMore
+  let WrapperTag
+
+  const {
+    markdown = false,
+    escapeHTML = false,
+    isBotMessage = false,
+    maxLength,
+    intl = false,
+    showMore = false,
+    wrapperProps = {},
+    children
+  } = props
+  const { tag, ...rest } = wrapperProps
+
+  const text = Children.onlyText(children)
+
+  if (intl && maxLength && text.length > maxLength) {
+    hasShowMore = true
+  }
+
+  const truncateIfRequired = message => {
+    return hasShowMore && !showMore ? truncate(message, maxLength) : message
+  }
+
+  if (markdown) {
+    const isUserMessage = !isBotMessage
+    const shouldEscapeHTML = isUserMessage || escapeHTML
+    const html = renderUnsafeHTML(text, shouldEscapeHTML)
+    WrapperTag = tag || 'div'
+    message = <WrapperTag {...rest} dangerouslySetInnerHTML={{ __html: truncateIfRequired(html) }} />
+  } else {
+    WrapperTag = tag || 'p'
+    message = <WrapperTag {...rest}>{truncateIfRequired(text)}</WrapperTag>
+  }
+
+  return message
 }

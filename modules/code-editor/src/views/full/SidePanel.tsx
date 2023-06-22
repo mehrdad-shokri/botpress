@@ -1,6 +1,7 @@
 import { Icon } from '@blueprintjs/core'
-import { lang } from 'botpress/shared'
-import { SearchBar, SectionAction, SidePanel, SidePanelSection } from 'botpress/ui'
+import { MainLayout, lang, ModuleUI } from 'botpress/shared'
+import { ALL_BOTS } from 'common/utils'
+import _ from 'lodash'
 import { inject, observer } from 'mobx-react'
 import React from 'react'
 
@@ -11,10 +12,12 @@ import FileStatus from './components/FileStatus'
 import NameModal from './components/NameModal'
 import NewFileModal from './components/NewFileModal'
 import { UploadModal } from './components/UploadModal'
+import FileNavigator from './FileNavigator'
 import { RootStore, StoreDef } from './store'
 import { EditorStore } from './store/editor'
 import { EXAMPLE_FOLDER_LABEL } from './utils/tree'
-import FileNavigator from './FileNavigator'
+
+const { SearchBar, SidePanel, SidePanelSection } = ModuleUI
 
 class PanelContent extends React.Component<Props> {
   private expandedNodes = {}
@@ -25,6 +28,7 @@ class PanelContent extends React.Component<Props> {
     botConfigs: [],
     moduleConfigFiles: [],
     rawFiles: [],
+    sharedLibs: [],
     selectedNode: '',
     selectedFile: undefined,
     isMoveModalOpen: false,
@@ -48,7 +52,8 @@ class PanelContent extends React.Component<Props> {
     const files = this.props.files[fileType]
 
     if (files && files.length) {
-      fileList.push({ label, files })
+      const sortedFiles = _.sortBy(files, 'location')
+      fileList.push({ label, files: sortedFiles })
     }
   }
 
@@ -58,7 +63,7 @@ class PanelContent extends React.Component<Props> {
     }
 
     const rawFiles = []
-    this.addFiles('raw', `Data`, rawFiles)
+    this.addFiles('raw', 'Data', rawFiles)
 
     const actionFiles = []
     this.addFiles('bot.actions', lang.tr('module.code-editor.sidePanel.bot', { name: window['BOT_NAME'] }), actionFiles)
@@ -76,10 +81,14 @@ class PanelContent extends React.Component<Props> {
     this.addFiles('bot.module_config', lang.tr('module.code-editor.sidePanel.currentBot'), moduleConfigFiles)
     this.addFiles('global.module_config', lang.tr('module.code-editor.sidePanel.global'), moduleConfigFiles)
 
+    const sharedLibs = []
+    this.addFiles('bot.shared_libs', lang.tr('module.code-editor.sidePanel.currentBot'), sharedLibs)
+    this.addFiles('global.shared_libs', lang.tr('module.code-editor.sidePanel.global'), sharedLibs)
+
     this.addFiles('hook_example', EXAMPLE_FOLDER_LABEL, hookFiles)
     this.addFiles('action_example', EXAMPLE_FOLDER_LABEL, actionFiles)
 
-    this.setState({ actionFiles, hookFiles, botConfigs: botConfigFiles, moduleConfigFiles, rawFiles })
+    this.setState({ actionFiles, hookFiles, botConfigs: botConfigFiles, moduleConfigFiles, rawFiles, sharedLibs })
   }
 
   updateNodeExpanded = (id: string, isExpanded: boolean) => {
@@ -103,6 +112,13 @@ class PanelContent extends React.Component<Props> {
     this.setState({ fileType: type, hookType, isCreateModalOpen: true })
   }
 
+  showAddButtons(type: string): boolean {
+    const isGlobalApp = window.BOT_ID === ALL_BOTS
+    const canWriteGlobal = this.hasPermission(`global.${type}`, true)
+
+    return !isGlobalApp || (isGlobalApp && canWriteGlobal)
+  }
+
   renderSectionModuleConfig() {
     if (!this.hasPermission('global.module_config') && !this.hasPermission('bot.module_config')) {
       return null
@@ -124,7 +140,7 @@ class PanelContent extends React.Component<Props> {
   }
 
   renderSectionConfig() {
-    if (!this.hasPermission('global.main_config') || !this.hasPermission('bot.bot_config')) {
+    if (!this.hasPermission('global.main_config') && !this.hasPermission('bot.bot_config')) {
       return null
     }
 
@@ -166,11 +182,43 @@ class PanelContent extends React.Component<Props> {
       ]
     }
 
+    if (!this.showAddButtons('actions')) {
+      actions = []
+    }
+
     return (
       <SidePanelSection label={lang.tr('module.code-editor.sidePanel.actions')} actions={actions}>
         <FileNavigator
           id="actions"
           files={this.state.actionFiles}
+          expandedNodes={this.expandedNodes}
+          selectedNode={this.state.selectedNode}
+          onNodeStateExpanded={this.updateNodeExpanded}
+          onNodeStateSelected={this.updateNodeSelected}
+        />
+      </SidePanelSection>
+    )
+  }
+
+  renderSharedLibs() {
+    if (!this.hasPermission('bot.shared_libs')) {
+      return null
+    }
+
+    const actions = [
+      {
+        id: 'btn-add-action',
+        icon: <Icon icon="add" />,
+        key: 'add',
+        onClick: () => this.createFilePrompt('shared_libs')
+      }
+    ]
+
+    return (
+      <SidePanelSection label={lang.tr('module.code-editor.sidePanel.sharedLibs')} actions={actions}>
+        <FileNavigator
+          id="shared_libs"
+          files={this.state.sharedLibs}
           expandedNodes={this.expandedNodes}
           selectedNode={this.state.selectedNode}
           onNodeStateExpanded={this.updateNodeExpanded}
@@ -212,7 +260,7 @@ class PanelContent extends React.Component<Props> {
         label={lang.tr('module.code-editor.sidePanel.rawFileEditor')}
         actions={[
           {
-            id: 'btn-upload',
+            id: 'btn-upload-sidepanel',
             icon: <Icon icon="upload" />,
             key: 'upload',
             onClick: () => this.setState({ selectedFile: undefined, isUploadModalOpen: true })
@@ -247,6 +295,10 @@ class PanelContent extends React.Component<Props> {
   }
 
   _buildHooksActions(showGlobalHooks: boolean) {
+    if (!this.showAddButtons('hooks')) {
+      return []
+    }
+
     const hooks = Object.keys(HOOK_SIGNATURES).map(hookType => ({
       id: hookType,
       label: hookType
@@ -266,7 +318,8 @@ class PanelContent extends React.Component<Props> {
             'before_outgoing_middleware',
             'after_event_processed',
             'before_suggestions_election',
-            'before_session_timeout'
+            'before_session_timeout',
+            'before_conversation_end'
           ].includes(x.id)
         )
       },
@@ -302,30 +355,32 @@ class PanelContent extends React.Component<Props> {
   }
 
   render() {
-    const { isOpenedFile, isDirty, isAdvanced } = this.props.editor
+    const { isAdvanced } = this.props.editor
     return (
       <SidePanel>
-        {isOpenedFile && isDirty ? (
+        <React.Fragment>
+          <SearchBar
+            icon="filter"
+            placeholder={lang.tr('module.code-editor.sidePanel.filterFiles')}
+            onChange={this.props.setFilenameFilter}
+          />
+          {isAdvanced ? (
+            this.renderSectionRaw()
+          ) : (
+            <React.Fragment>
+              {this.renderSectionActions()}
+              {this.renderSectionHooks()}
+              {this.renderSharedLibs()}
+              {this.renderSectionConfig()}
+              {this.renderSectionModuleConfig()}
+            </React.Fragment>
+          )}
+        </React.Fragment>
+
+        <MainLayout.BottomPanel.Register tabName="Code Editor">
           <FileStatus />
-        ) : (
-          <React.Fragment>
-            <SearchBar
-              icon="filter"
-              placeholder={lang.tr('module.code-editor.sidePanel.filterFiles')}
-              onChange={this.props.setFilenameFilter}
-            />
-            {isAdvanced ? (
-              this.renderSectionRaw()
-            ) : (
-              <React.Fragment>
-                {this.renderSectionActions()}
-                {this.renderSectionHooks()}
-                {this.renderSectionConfig()}
-                {this.renderSectionModuleConfig()}
-              </React.Fragment>
-            )}
-          </React.Fragment>
-        )}
+        </MainLayout.BottomPanel.Register>
+
         <NewFileModal
           isOpen={this.state.isCreateModalOpen}
           toggle={() => this.setState({ isCreateModalOpen: !this.state.isCreateModalOpen })}
@@ -350,7 +405,6 @@ export default inject(({ store }: { store: RootStore }) => ({
   store,
   editor: store.editor,
   files: store.files,
-  isDirty: store.editor.isDirty,
   setFilenameFilter: store.setFilenameFilter,
   createFilePrompt: store.createFilePrompt,
   permissions: store.permissions

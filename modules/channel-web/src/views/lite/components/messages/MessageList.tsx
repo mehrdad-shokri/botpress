@@ -1,10 +1,10 @@
-import { ResizeObserver } from '@juggle/resize-observer'
 import differenceInMinutes from 'date-fns/difference_in_minutes'
-import { debounce } from 'lodash'
+import last from 'lodash/last'
 import { observe } from 'mobx'
 import { inject, observer } from 'mobx-react'
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { InjectedIntlProps, injectIntl } from 'react-intl'
+import ScrollToBottom, { useScrollToBottom, useSticky } from 'react-scroll-to-bottom'
 
 import constants from '../../core/constants'
 import { RootStore, StoreDef } from '../../store'
@@ -14,61 +14,17 @@ import Avatar from '../common/Avatar'
 import MessageGroup from './MessageGroup'
 
 interface State {
-  manualScroll: boolean
   showNewMessageIndicator: boolean
+  messagesLength: number
 }
 
 class MessageList extends React.Component<MessageListProps, State> {
   private messagesDiv: HTMLElement
-  private divSizeObserver: ResizeObserver
-  state: State = { showNewMessageIndicator: false, manualScroll: false }
 
   componentDidMount() {
-    this.tryScrollToBottom(true)
-
     observe(this.props.focusedArea, focus => {
-      focus.newValue === 'convo' && this.messagesDiv.focus()
+      focus.newValue === 'convo' && this.messagesDiv?.focus()
     })
-
-    observe(this.props.currentMessages, messages => {
-      if (this.state.manualScroll) {
-        if (!this.state.showNewMessageIndicator) {
-          this.setState({ showNewMessageIndicator: true })
-        }
-        return
-      }
-      this.tryScrollToBottom()
-    })
-
-    // this should account for keyboard rendering as it triggers a resize of the messagesDiv
-    this.divSizeObserver = new ResizeObserver(
-      debounce(
-        ([divResizeEntry]) => {
-          // we don't need to do anything with the resize entry
-          this.tryScrollToBottom()
-        },
-        200,
-        { trailing: true }
-      )
-    )
-    this.divSizeObserver.observe(this.messagesDiv)
-  }
-
-  componentWillUnmount() {
-    this.divSizeObserver.disconnect()
-  }
-
-  tryScrollToBottom(delayed?: boolean) {
-    setTimeout(
-      () => {
-        try {
-          this.messagesDiv.scrollTop = this.messagesDiv.scrollHeight
-        } catch (err) {
-          // Discard the error
-        }
-      },
-      delayed ? 250 : 0
-    )
   }
 
   handleKeyDown = e => {
@@ -77,8 +33,9 @@ class MessageList extends React.Component<MessageListProps, State> {
     }
 
     const maxScroll = this.messagesDiv.scrollHeight - this.messagesDiv.clientHeight
-    const shouldFocusNext = e.key == 'ArrowRight' || (e.key == 'ArrowDown' && this.messagesDiv.scrollTop == maxScroll)
-    const shouldFocusPrevious = e.key == 'ArrowLeft' || (e.key == 'ArrowUp' && this.messagesDiv.scrollTop == 0)
+    const shouldFocusNext =
+      e.key === 'ArrowRight' || (e.key === 'ArrowDown' && this.messagesDiv.scrollTop === maxScroll)
+    const shouldFocusPrevious = e.key === 'ArrowLeft' || (e.key === 'ArrowUp' && this.messagesDiv.scrollTop === 0)
 
     if (shouldFocusNext) {
       this.messagesDiv.blur()
@@ -91,41 +48,82 @@ class MessageList extends React.Component<MessageListProps, State> {
     }
   }
 
-  renderDate(date) {
+  render() {
+    return (
+      <ScrollToBottom
+        mode={'bottom'}
+        initialScrollBehavior={'auto'}
+        tabIndex={0}
+        className={'bpw-msg-list-scroll-container'}
+        scrollViewClassName={'bpw-msg-list'}
+        ref={m => {
+          this.messagesDiv = m
+        }}
+        followButtonClassName={'bpw-msg-list-follow'}
+      >
+        <Content {...this.props} />
+      </ScrollToBottom>
+    )
+  }
+}
+
+const Content = observer((props: MessageListProps) => {
+  const [state, setState] = useState<State>({
+    showNewMessageIndicator: false,
+    messagesLength: undefined
+  })
+  const scrollToBottom = useScrollToBottom()
+  const [sticky] = useSticky()
+
+  useEffect(() => {
+    const stateUpdate = { ...state, messagesLength: props.currentMessages?.length }
+    if (!sticky && state.messagesLength !== props.currentMessages?.length) {
+      setState({ ...stateUpdate, showNewMessageIndicator: !props?.alwaysScrollDownOnMessages })
+      props?.alwaysScrollDownOnMessages && scrollToBottom()
+    } else {
+      setState({ ...stateUpdate, showNewMessageIndicator: false })
+    }
+  }, [props.currentMessages?.length, sticky])
+
+  const shouldDisplayMessage = (m: Message): boolean => {
+    return m.payload.type !== 'postback'
+  }
+
+  const renderAvatar = (name, url) => {
+    const avatarSize = props.isEmulator ? 20 : 40 // quick fix
+    return <Avatar name={name} avatarUrl={url} height={avatarSize} width={avatarSize} />
+  }
+
+  const renderDate = date => {
     return (
       <div className={'bpw-date-container'}>
-        {this.props.intl.formatTime(new Date(date), {
-          hour12: false,
-          year: 'numeric',
-          month: 'long',
+        {new Intl.DateTimeFormat(props.intl.locale || 'en', {
+          month: 'short',
           day: 'numeric',
           hour: 'numeric',
           minute: 'numeric'
-        })}
+        }).format(new Date(date))}
         <div className={'bpw-small-line'} />
       </div>
     )
   }
 
-  renderAvatar(name, url) {
-    return <Avatar name={name} avatarUrl={url} height={40} width={40} />
-  }
-
-  renderMessageGroups() {
-    const messages = (this.props.currentMessages || []).filter(m => this.shouldDisplayMessage(m))
-    const groups = []
+  const renderMessageGroups = () => {
+    const messages = (props.currentMessages || []).filter(m => shouldDisplayMessage(m))
+    const groups: Message[][] = []
 
     let lastSpeaker = undefined
     let lastDate = undefined
     let currentGroup = undefined
 
     messages.forEach(m => {
-      const speaker = m.full_name
-      const date = m.sent_on
+      const speaker = m.payload.channel?.web?.userName || m.authorId
+      const date = m.sentOn
 
       // Create a new group if messages are separated by more than X minutes or if different speaker
       if (
         speaker !== lastSpeaker ||
+        !currentGroup ||
         differenceInMinutes(new Date(date), new Date(lastDate)) >= constants.TIME_BETWEEN_DATES
       ) {
         currentGroup = []
@@ -141,42 +139,42 @@ class MessageList extends React.Component<MessageListProps, State> {
       lastDate = date
     })
 
-    if (this.props.isBotTyping.get()) {
+    if (props.isBotTyping.get()) {
       if (lastSpeaker !== 'bot') {
         currentGroup = []
         groups.push(currentGroup)
       }
 
       currentGroup.push({
-        sent_on: new Date(),
+        sentOn: new Date(),
         userId: undefined,
-        message_type: 'typing'
+        payload: { type: 'typing' }
       })
     }
     return (
       <div>
         {groups.map((group, i) => {
           const lastGroup = groups[i - 1]
-          const lastDate = lastGroup?.[lastGroup.length - 1]?.sent_on
-          const groupDate = group?.[0].sent_on
+          const lastDate = lastGroup?.[lastGroup.length - 1]?.sentOn
+          const groupDate = group?.[0].sentOn
 
           const isDateNeeded =
             !groups[i - 1] ||
             differenceInMinutes(new Date(groupDate), new Date(lastDate)) > constants.TIME_BETWEEN_DATES
 
-          const [{ userId, full_name: userName, avatar_url: avatarUrl }] = group
+          const { authorId, payload } = last(group)
 
-          const avatar = userId
-            ? this.props.showUserAvatar && this.renderAvatar(userName, avatarUrl)
-            : this.renderAvatar(this.props.botName, avatarUrl || this.props.botAvatarUrl)
+          const avatar = authorId
+            ? props.showUserAvatar && renderAvatar(payload.channel?.web?.userName, payload.channel?.web?.avatarUrl)
+            : renderAvatar(props.botName, payload.channel?.web?.avatarUrl || props.botAvatarUrl)
 
           return (
             <div key={i}>
-              {isDateNeeded && this.renderDate(group[0].sent_on)}
+              {isDateNeeded && renderDate(group[0].sentOn)}
               <MessageGroup
-                isBot={!userId}
+                isBot={!authorId}
                 avatar={avatar}
-                userName={userName}
+                userName={payload.channel?.web?.userName}
                 key={`msg-group-${i}`}
                 isLastGroup={i >= groups.length - 1}
                 messages={group}
@@ -188,46 +186,25 @@ class MessageList extends React.Component<MessageListProps, State> {
     )
   }
 
-  shouldDisplayMessage = (m: Message): boolean => {
-    return m.message_type !== 'postback'
-  }
-
-  handleScroll = debounce(e => {
-    const scroll = this.messagesDiv.scrollHeight - this.messagesDiv.scrollTop - this.messagesDiv.clientHeight
-    const manualScroll = scroll >= 150
-    const showNewMessageIndicator = this.state.showNewMessageIndicator && manualScroll
-
-    this.setState({ manualScroll, showNewMessageIndicator })
-  }, 50)
-
-  render() {
-    return (
-      <div
-        tabIndex={0}
-        onKeyDown={this.handleKeyDown}
-        className={'bpw-msg-list'}
-        ref={m => {
-          this.messagesDiv = m
-        }}
-        onScroll={this.handleScroll}
-      >
-        {this.state.showNewMessageIndicator && (
-          <div className="bpw-new-messages-indicator" onClick={e => this.tryScrollToBottom()}>
-            <span>
-              {this.props.intl.formatMessage({
-                id: 'messages.newMessage' + (this.props.currentMessages.length === 1 ? '' : 's')
-              })}
-            </span>
-          </div>
-        )}
-        {this.renderMessageGroups()}
-      </div>
-    )
-  }
-}
+  return (
+    <>
+      {state.showNewMessageIndicator && (
+        <div className="bpw-new-messages-indicator" onClick={e => scrollToBottom()}>
+          <span>
+            {props.intl.formatMessage({
+              id: `messages.newMessage${props.currentMessages?.length === 1 ? '' : 's'}`
+            })}
+          </span>
+        </div>
+      )}
+      {renderMessageGroups()}
+    </>
+  )
+})
 
 export default inject(({ store }: { store: RootStore }) => ({
   intl: store.intl,
+  isEmulator: store.isEmulator,
   botName: store.botName,
   isBotTyping: store.isBotTyping,
   botAvatarUrl: store.botAvatarUrl,
@@ -236,7 +213,9 @@ export default inject(({ store }: { store: RootStore }) => ({
   focusNext: store.view.focusNext,
   focusedArea: store.view.focusedArea,
   showUserAvatar: store.config.showUserAvatar,
-  enableArrowNavigation: store.config.enableArrowNavigation
+  enableArrowNavigation: store.config.enableArrowNavigation,
+  preferredLanguage: store.preferredLanguage,
+  alwaysScrollDownOnMessages: store.alwaysScrollDownOnMessages
 }))(injectIntl(observer(MessageList)))
 
 type MessageListProps = InjectedIntlProps &
@@ -248,8 +227,11 @@ type MessageListProps = InjectedIntlProps &
     | 'focusPrevious'
     | 'focusNext'
     | 'botAvatarUrl'
+    | 'isEmulator'
     | 'botName'
     | 'enableArrowNavigation'
     | 'showUserAvatar'
     | 'currentMessages'
+    | 'preferredLanguage'
+    | 'alwaysScrollDownOnMessages'
   >

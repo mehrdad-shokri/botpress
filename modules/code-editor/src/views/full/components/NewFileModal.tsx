@@ -1,5 +1,6 @@
 import { Button, Checkbox, Classes, Dialog, FormGroup, InputGroup, Intent, Radio, RadioGroup } from '@blueprintjs/core'
 import { lang } from 'botpress/shared'
+import { ALL_BOTS } from 'common/utils'
 import _ from 'lodash'
 import React, { FC, useEffect, useState } from 'react'
 
@@ -11,7 +12,7 @@ import { httpAction, legacyAction } from '../utils/templates'
 interface Props {
   isOpen: boolean
   toggle: () => void
-  openFile: (args: any) => void
+  openFile: (args: any) => Promise<void>
   files?: FilesDS
   selectedType: string
   selectedHookType: string
@@ -26,28 +27,27 @@ const sanitizeName = (text: string) =>
 
 const NewFileModal: FC<Props> = props => {
   const [name, setName] = useState('')
-  const [isScoped, setScoped] = useState(true)
+  const [isScoped, setScoped] = useState(FileTypes[props.selectedType]?.allowScoped ?? true)
 
   useEffect(() => {
+    setScoped(FileTypes[props.selectedType]?.allowScoped)
     setName('')
   }, [props.isOpen])
 
   const submit = async e => {
     e.preventDefault()
 
-    const finalName = name.endsWith('.js') || name.endsWith('.json') ? name : name + '.js'
+    const finalName = name.endsWith('.js') || name.endsWith('.json') ? name : `${name}.js`
+    const isJson = finalName.endsWith('.json')
+    const isJs = finalName.endsWith('.js')
 
-    let content
-    switch (props.selectedType) {
-      case 'action_legacy':
-        content = legacyAction
-        break
-      case 'action_http':
-        content = httpAction
-        break
-      default:
-        content = ' '
-        break
+    let content = ' '
+    if (props.selectedType === 'action_legacy' && isJs) {
+      content = legacyAction
+    } else if (props.selectedType === 'action_http' && isJs) {
+      content = httpAction
+    } else if (isJson) {
+      content = '{\n\t\n}'
     }
 
     await props.openFile({
@@ -62,9 +62,11 @@ const NewFileModal: FC<Props> = props => {
     closeModal()
   }
 
+  const isGlobalApp = window.BOT_ID === ALL_BOTS
   const canBeBotScoped = () =>
-    props.selectedType !== 'hook' ||
-    (props.selectedType === 'hook' && BOT_SCOPED_HOOKS.includes(props.selectedHookType))
+    !isGlobalApp &&
+    (props.selectedType !== 'hook' ||
+      (props.selectedType === 'hook' && BOT_SCOPED_HOOKS.includes(props.selectedHookType)))
 
   const closeModal = () => {
     setName('')
@@ -117,8 +119,8 @@ const NewFileModal: FC<Props> = props => {
           <div className={Classes.DIALOG_FOOTER_ACTIONS}>
             <Button
               type="submit"
-              id="btn-submit"
-              text={lang.tr(`submit`)}
+              id="btn-submit-new-file"
+              text={lang.tr('submit')}
               intent={Intent.PRIMARY}
               onClick={submit}
               disabled={!name}

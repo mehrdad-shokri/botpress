@@ -1,3 +1,5 @@
+@import 'variables';
+
 @mixin padded {
   padding: 1rem;
 }
@@ -5,12 +7,32 @@
 .sidePanel {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  height: calc(100% - 60px);
   padding-bottom: 10px;
 }
 
 .padded {
   @include padded;
+}
+
+.filterItem {
+  height: 40px;
+  justify-content: left;
+  width: 220px;
+  margin: 10px;
+}
+
+.filterContainer {
+  margin: 10px 10px 0px 10px;
+  span {
+    font-size: 10pt;
+  }
+  :global(.selected),
+  :global(.selected):hover {
+    box-shadow: inset 0 0 0 1px rgba(16, 22, 26, 0.2), inset 0 1px 2px rgba(16, 22, 26, 0.2);
+    background-color: #d8e1e8;
+    background-image: none;
+  }
 }
 
 .contentFixed {
@@ -31,7 +53,7 @@
 .sideList {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  height: calc(100% - 10px);
 }
 
 .sideListList {
@@ -104,7 +126,6 @@
 
 .mainView {
   height: 100%;
-  overflow-y: auto;
 
   & > h3 {
     margin-top: 0;
@@ -116,7 +137,7 @@
 }
 
 .thPhrase {
-  width: 35%
+  width: 35%;
 }
 
 .thUpdated {
@@ -132,8 +153,7 @@
 }
 
 .withStickyActionBar {
-  // Height of the sticky action bar
-  padding-bottom: 50px;
+  padding-bottom: $stickyBarHeight;
 }
 
 .stickyActionBar {

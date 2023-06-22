@@ -1,6 +1,6 @@
 export default {
   /** These types are sent using the /message/ endpoint */
-  MESSAGE_TYPES: ['text', 'quick_reply', 'form', 'login_prompt', 'visit', 'postback'],
+  MESSAGE_TYPES: ['text', 'quick_reply', 'form', 'login_prompt', 'postback'],
   /** The duration of the hide / show chat */
   ANIM_DURATION: 300,
   MIN_TIME_BETWEEN_SOUNDS: 1000,
@@ -14,7 +14,6 @@ export default {
   /** The default configuration when starting the chat */
   DEFAULT_CONFIG: {
     userId: undefined,
-    stylesheet: 'assets/modules/channel-web/default.css',
     extraStylesheet: '',
     botName: undefined,
     botConvoDescription: undefined,
@@ -32,6 +31,9 @@ export default {
     externalAuthToken: undefined,
     showPoweredBy: window.SHOW_POWERED_BY,
     enablePersistHistory: true,
-    enableResetSessionShortcut: false
+    enableResetSessionShortcut: false,
+    enableVoiceComposer: false,
+    enableConversationDeletion: false,
+    closeOnEscape: true
   }
 }

@@ -1,8 +1,11 @@
 import apicache from 'apicache'
 import aws from 'aws-sdk'
+import axios from 'axios'
 import * as sdk from 'botpress/sdk'
+import { Conversation, Message, MessagingClient } from 'botpress/sdk'
 import { asyncMiddleware as asyncMw, BPRequest } from 'common/http'
-import { Response } from 'express'
+import { Request, Response, NextFunction } from 'express'
+import FormData from 'form-data'
 import _ from 'lodash'
 import moment from 'moment'
 import multer from 'multer'
@@ -13,12 +16,15 @@ import { Config } from '../config'
 
 import Database from './db'
 
-const ERR_USER_ID_REQ = '`userId` is required and must be valid'
+const ERR_USER_ID_INVALID = 'user id associated with this session must be valid'
 const ERR_MSG_TYPE = '`type` is required and must be valid'
 const ERR_CONV_ID_REQ = '`conversationId` is required and must be valid'
 const ERR_BAD_LANGUAGE = '`language` is required and must be valid'
+const ERR_BAD_CONV_ID = "The conversation ID doesn't belong to that user"
+const ERR_BAD_USER_SESSION_ID = 'session id is invalid'
 
 const USER_ID_MAX_LENGTH = 40
+const MAX_MESSAGE_HISTORY = 100
 const SUPPORTED_MESSAGES = [
   'text',
   'quick_reply',
@@ -26,58 +32,39 @@ const SUPPORTED_MESSAGES = [
   'login_prompt',
   'visit',
   'request_start_conversation',
-  'postback'
+  'postback',
+  'voice'
 ]
 
-export default async (bp: typeof sdk, db: Database) => {
-  const asyncMiddleware = asyncMw(bp.logger)
-  const globalConfig = (await bp.config.getModuleConfig('channel-web')) as Config
+const WEBCHAT_CUSTOM_ID_KEY = 'webchatCustomId'
 
-  const diskStorage = multer.diskStorage({
-    destination: globalConfig.fileUploadPath,
-    limits: {
-      files: 1,
-      fileSize: 5242880 // 5MB
-    },
-    filename: function(req, file, cb) {
-      const userId = _.get(req, 'params.userId') || 'anonymous'
-      const ext = path.extname(file.originalname)
+type ChatRequest = BPRequest & {
+  visitorId: string
+  userId: string
+  botId: string
+  conversationId: string
+  messaging: MessagingClient
+}
 
-      cb(undefined, `${userId}_${new Date().getTime()}${ext}`)
-    }
-  })
+const userIdIsValid = (userId: string): boolean => {
+  const hasBreakingConstraints = userId.length > USER_ID_MAX_LENGTH || userId.toLowerCase() === 'undefined'
 
-  let upload = multer({ storage: diskStorage })
+  return !hasBreakingConstraints && /[a-z0-9-_]+/i.test(userId)
+}
 
-  if (globalConfig.uploadsUseS3) {
-    /*
-      You can override AWS's default settings here. Example:
-      { region: 'us-east-1', apiVersion: '2014-10-01', credentials: {...} }
-     */
-    const awsConfig = {
-      region: globalConfig.uploadsS3Region,
-      credentials: {
-        accessKeyId: globalConfig.uploadsS3AWSAccessKey,
-        secretAccessKey: globalConfig.uploadsS3AWSAccessSecret
-      }
-    }
+const scopedUploadMiddlware = (bp: typeof sdk) => {
+  return async (req, res, next) => {
+    const { botId } = req.params
+    const config = (await bp.config.getModuleConfigForBot('channel-web', botId)) as Config
 
-    if (!awsConfig.credentials.accessKeyId && !awsConfig.credentials.secretAccessKey) {
-      delete awsConfig.credentials
-    }
-
-    if (!awsConfig.region) {
-      delete awsConfig.region
-    }
-
-    const s3 = new aws.S3(awsConfig)
-    const s3Storage = multers3({
-      s3: s3,
-      bucket: globalConfig.uploadsS3Bucket || 'uploads',
-      contentType: multers3.AUTO_CONTENT_TYPE,
-      cacheControl: 'max-age=31536000', // one year caching
-      acl: 'public-read',
-      key: function(req, file, cb) {
+    const diskStorage = multer.diskStorage({
+      destination: config.fileUploadPath,
+      // @ts-ignore typing indicates that limits isn't supported
+      limits: {
+        files: 1,
+        fileSize: 5242880 // 5MB
+      },
+      filename(req, file, cb) {
         const userId = _.get(req, 'params.userId') || 'anonymous'
         const ext = path.extname(file.originalname)
 
@@ -85,14 +72,113 @@ export default async (bp: typeof sdk, db: Database) => {
       }
     })
 
-    upload = multer({ storage: s3Storage })
+    let upload = multer({ storage: diskStorage })
+
+    if (config.uploadsUseS3) {
+      /*
+        You can override AWS's default settings here. Example:
+        { region: 'us-east-1', apiVersion: '2014-10-01', credentials: {...} }
+      */
+      const awsConfig = {
+        region: config.uploadsS3Region,
+        credentials: {
+          accessKeyId: config.uploadsS3AWSAccessKey,
+          secretAccessKey: config.uploadsS3AWSAccessSecret
+        }
+      }
+
+      if (!awsConfig.credentials.accessKeyId && !awsConfig.credentials.secretAccessKey) {
+        delete awsConfig.credentials
+      }
+
+      if (!awsConfig.region) {
+        delete awsConfig.region
+      }
+
+      // TODO use media service with a 's3' backend
+      const s3 = new aws.S3(awsConfig)
+      const s3Storage = multers3({
+        s3,
+        bucket: config.uploadsS3Bucket || 'uploads',
+        contentType: multers3.AUTO_CONTENT_TYPE,
+        cacheControl: 'max-age=31536000', // one year caching
+        acl: 'public-read',
+        key(req, file, cb) {
+          const userId = _.get(req, 'params.userId') || 'anonymous'
+          const ext = path.extname(file.originalname)
+
+          cb(undefined, `${userId}_${new Date().getTime()}${ext}`)
+        }
+      })
+
+      upload = multer({ storage: s3Storage })
+    }
+
+    return upload.single('file')(req, res, next)
   }
+}
+
+export default async (bp: typeof sdk, db: Database) => {
+  const asyncMiddleware = asyncMw(bp.logger)
+  const scopedUpload = scopedUploadMiddlware(bp)
 
   const router = bp.http.createRouterForBot('channel-web', { checkAuthentication: false, enableJsonBodyParser: true })
   const perBotCache = apicache.options({
-    appendKey: req => req.method + ' for bot ' + req.params && req.params.botId,
+    appendKey: (req: Request, _res: Response) => `${req.method} for bot ${req.params?.boId}`,
     statusCodes: { include: [200] }
   }).middleware
+
+  const assertUserInfo = (options: { convoIdRequired?: boolean } = {}) => async (
+    req: ChatRequest,
+    _res: Response,
+    next: NextFunction
+  ) => {
+    const { botId } = req.params
+    const { conversationId, webSessionId } = req.body || {}
+
+    req.visitorId = await bp.realtime.getVisitorIdFromGuestSocketId(webSessionId)
+    if (!req.visitorId) {
+      return next(ERR_BAD_USER_SESSION_ID)
+    }
+
+    if (!userIdIsValid(req.visitorId)) {
+      return next(ERR_USER_ID_INVALID)
+    }
+
+    req.messaging = bp.messaging.forBot(botId)
+    const userId = await db.mapVisitor(botId, req.visitorId)
+
+    if (conversationId) {
+      let conversation: Conversation
+      try {
+        conversation = await req.messaging.getConversation(conversationId)
+      } catch {}
+
+      if (!conversation || !userId || conversation.userId !== userId) {
+        return next(ERR_BAD_CONV_ID)
+      }
+
+      req.conversationId = conversationId
+    }
+
+    if (options.convoIdRequired && req.conversationId === undefined) {
+      return next(ERR_CONV_ID_REQ)
+    }
+
+    req.botId = botId
+    req.userId = userId
+
+    next()
+  }
+
+  const getRecent = async (messaging: MessagingClient, userId: string) => {
+    const convs = await messaging.listConversations(userId, 1)
+    if (convs?.length) {
+      return convs[0]
+    }
+
+    return messaging.createConversation(userId)
+  }
 
   router.get(
     '/botInfo',
@@ -114,158 +200,183 @@ export default async (bp: typeof sdk, db: Database) => {
         details: botInfo.details,
         languages: botInfo.languages,
         extraStylesheet: config.extraStylesheet,
-        security
+        disableNotificationSound: config.disableNotificationSound,
+        security,
+        lazySocket: config.lazySocket,
+        maxMessageLength: config.maxMessageLength,
+        alwaysScrollDownOnMessages: config.alwaysScrollDownOnMessages
       })
     })
   )
 
-  // ?conversationId=xxx (optional)
   router.post(
-    '/messages/:userId',
+    '/users/customId',
     bp.http.extractExternalToken,
-    asyncMiddleware(async (req: BPRequest, res: Response) => {
-      const { botId, userId = undefined } = req.params
+    assertUserInfo(),
+    asyncMiddleware(async (req: ChatRequest, res: Response) => {
+      const { botId, userId } = req
+      const { customId } = req.body
 
-      if (!validateUserId(userId)) {
-        return res.status(400).send(ERR_USER_ID_REQ)
+      if (!customId) {
+        return res.sendStatus(400)
       }
 
-      const user = await bp.users.getOrCreateUser('web', userId, botId)
-      const payload = req.body || {}
+      await bp.users.getOrCreateUser('web', userId, botId)
+      await bp.users.updateAttributes('web', userId, { [WEBCHAT_CUSTOM_ID_KEY]: customId })
 
-      let { conversationId = undefined } = req.query || {}
-      conversationId = conversationId && parseInt(conversationId)
-
-      if (!SUPPORTED_MESSAGES.includes(payload.type)) {
-        // TODO: Support files
-        return res.status(400).send(ERR_MSG_TYPE)
-      }
-
-      if (payload.type === 'visit') {
-        const { timezone, language } = payload
-        const isValidTimezone = _.isNumber(timezone) && timezone >= -12 && timezone <= 14 && timezone % 0.5 === 0
-        const isValidLanguage = language.length < 4 && !_.get(user, 'result.attributes.language')
-
-        const newAttributes = {
-          ...(isValidTimezone && { timezone }),
-          ...(isValidLanguage && { language })
-        }
-
-        if (Object.getOwnPropertyNames(newAttributes).length) {
-          await bp.users.updateAttributes('web', userId, newAttributes)
-        }
-      }
-
-      if (!conversationId) {
-        conversationId = await db.getOrCreateRecentConversation(botId, userId, { originatesFromUserMessage: true })
-      }
-
-      await sendNewMessage(
-        botId,
-        userId,
-        conversationId,
-        payload,
-        req.credentials,
-        !!req.headers.authorization,
-        user.result
-      )
-
-      return res.sendStatus(200)
+      res.sendStatus(200)
     })
   )
 
-  // ?conversationId=xxx (required)
   router.post(
-    '/messages/:userId/files',
-    upload.single('file'),
+    '/messages',
     bp.http.extractExternalToken,
-    asyncMiddleware(async (req: BPRequest & any, res: Response) => {
-      const { botId = undefined, userId = undefined } = req.params || {}
+    assertUserInfo(),
+    asyncMiddleware(async (req: ChatRequest, res: Response) => {
+      const { botId, userId } = req
 
-      if (!validateUserId(userId)) {
-        return res.status(400).send(ERR_USER_ID_REQ)
+      const payload = req.body.payload || {}
+
+      if (!SUPPORTED_MESSAGES.includes(payload.type)) {
+        return res.status(400).send(ERR_MSG_TYPE)
       }
+
+      if (!req.conversationId) {
+        req.conversationId = (await getRecent(req.messaging, userId)).id
+      }
+
+      await sendNewMessage(req, payload, !!req.headers.authorization)
+
+      res.sendStatus(200)
+    })
+  )
+
+  router.post(
+    '/messages/files',
+    scopedUpload,
+    bp.http.extractExternalToken,
+    assertUserInfo({ convoIdRequired: true }),
+    asyncMiddleware(async (req: ChatRequest & any, res: Response) => {
+      const { botId, userId } = req
+      const payloadValue = req.body.payload || {}
 
       await bp.users.getOrCreateUser('web', userId, botId) // Just to create the user if it doesn't exist
 
-      let { conversationId = undefined } = req.query || {}
-      conversationId = conversationId && parseInt(conversationId)
-
-      if (!conversationId) {
-        return res.status(400).send(ERR_CONV_ID_REQ)
-      }
-
       const payload = {
-        text: `Uploaded a file [${req.file.originalname}]`,
+        text: `Uploaded a file **${req.file.originalname}**`,
         type: 'file',
         storage: req.file.location ? 's3' : 'local',
         url: req.file.location || req.file.path || undefined,
         name: req.file.filename,
         originalName: req.file.originalname,
         mime: req.file.contentType || req.file.mimetype,
-        size: req.file.size
+        size: req.file.size,
+        payload: payloadValue
       }
 
-      await sendNewMessage(botId, userId, conversationId, payload, req.credentials)
+      await sendNewMessage(req, payload, false)
 
       return res.sendStatus(200)
     })
   )
 
-  router.get('/conversations/:userId/:conversationId', async (req: BPRequest, res: Response) => {
-    const { userId, conversationId, botId } = req.params
+  router.post(
+    '/messages/voice',
+    bp.http.extractExternalToken,
+    assertUserInfo({ convoIdRequired: true }),
+    asyncMiddleware(async (req: ChatRequest, res: Response) => {
+      const { botId, userId } = req
+      const { audio } = req.body
 
-    if (!validateUserId(userId)) {
-      return res.status(400).send(ERR_USER_ID_REQ)
-    }
+      if (!audio?.buffer || !audio?.title) {
+        throw new Error('Voices messages must contain an audio buffer and title')
+      }
 
-    const conversation = await db.getConversation(userId, conversationId, botId)
+      await bp.users.getOrCreateUser('web', userId, botId) // Just to create the user if it doesn't exist
 
-    return res.send(conversation)
-  })
+      const buffer = Buffer.from(audio!.buffer, 'base64')
 
-  router.get('/conversations/:userId', async (req: BPRequest, res: Response) => {
-    const { botId = undefined, userId = undefined } = req.params || {}
+      const formData = new FormData()
+      formData.append('file', buffer, audio!.title)
 
-    if (!validateUserId(userId)) {
-      return res.status(400).send(ERR_USER_ID_REQ)
-    }
+      const axiosConfig = await bp.http.getAxiosConfigForBot(botId, { studioUrl: true })
+      axiosConfig.headers['Content-Type'] = `multipart/form-data; boundary=${formData.getBoundary()}`
 
-    await bp.users.getOrCreateUser('web', userId, botId)
+      // Upload the audio buffer to the Media Service
+      const {
+        data: { url }
+      } = await axios.post<{ url: string }>('/media', formData, {
+        ...axiosConfig
+      })
 
-    const conversations = await db.listConversations(userId, botId)
+      const payload = {
+        type: 'voice',
+        audio: url
+      }
 
-    const config = await bp.config.getModuleConfigForBot('channel-web', botId)
+      await sendNewMessage(req, payload, false)
 
-    return res.send({
-      conversations: [...conversations],
-      startNewConvoOnTimeout: config.startNewConvoOnTimeout,
-      recentConversationLifetime: config.recentConversationLifetime
+      return res.sendStatus(200)
     })
-  })
+  )
 
-  function validateUserId(userId: string) {
-    if (!userId || userId.length > USER_ID_MAX_LENGTH) {
-      return false
-    }
+  router.post(
+    '/conversations/get',
+    assertUserInfo({ convoIdRequired: true }),
+    asyncMiddleware(async (req: ChatRequest, res: Response) => {
+      const { conversationId, botId } = req
 
-    return /[a-z0-9-_]+/i.test(userId)
-  }
+      const config = (await bp.config.getModuleConfigForBot('channel-web', botId)) as Config
+      const conversation = await req.messaging.getConversation(conversationId)
+      const messages = await req.messaging.listMessages(conversationId, config.maxMessagesHistory)
 
-  async function sendNewMessage(
-    botId: string,
-    userId: string,
-    conversationId,
-    payload,
-    credentials: any,
-    useDebugger?: boolean,
-    user?: sdk.User
-  ) {
-    const config = await bp.config.getModuleConfigForBot('channel-web', botId)
+      // this function scope can (and probably will) expand to other types as well with a switch case on the type
+      // we do something similar in the cms to determine weather there are translated fields or not
+      const notEmptyPayload = payload => (payload.type === 'text' ? !!payload.text : true)
 
-    if (
+      const displayableMessages = messages.filter(({ payload }) => payload.type !== 'visit' && notEmptyPayload(payload))
+
+      return res.send({ ...conversation, messages: displayableMessages })
+    })
+  )
+
+  router.post(
+    '/conversations/list',
+    assertUserInfo(),
+    asyncMiddleware(async (req: ChatRequest, res: Response) => {
+      const { userId, botId } = req
+
+      await bp.users.getOrCreateUser('web', userId, botId)
+
+      const conversations = await req.messaging.listConversations(userId, MAX_MESSAGE_HISTORY)
+      const config = await bp.config.getModuleConfigForBot('channel-web', botId)
+
+      const convsWithLastMessage: (Conversation & { lastMessage?: Message })[] = []
+      for (const conversation of conversations) {
+        convsWithLastMessage.push({
+          ...conversation,
+          lastMessage: (await req.messaging.listMessages(conversation.id, 1))[0]
+        })
+      }
+
+      return res.send({
+        conversations: convsWithLastMessage,
+        startNewConvoOnTimeout: config.startNewConvoOnTimeout,
+        recentConversationLifetime: config.recentConversationLifetime
+      })
+    })
+  )
+
+  async function sendNewMessage(req: ChatRequest, payload: any, useDebugger: boolean) {
+    const config = await bp.config.getModuleConfigForBot('channel-web', req.botId)
+
+    if (payload.type === 'voice') {
+      if (_.isEmpty(payload.audio)) {
+        throw new Error('Voices messages must contain an audio buffer')
+      }
+    } else if (
       (!payload.text || !_.isString(payload.text) || payload.text.length > config.maxMessageLength) &&
-      payload.type != 'postback'
+      payload.type !== 'postback'
     ) {
       throw new Error(`Text must be a valid string of less than ${config.maxMessageLength} chars`)
     }
@@ -276,42 +387,50 @@ export default async (bp: typeof sdk, db: Database) => {
       sanitizedPayload = _.omit(payload, [...sensitive, 'sensitive'])
     }
 
+    const message = await req.messaging.createMessage(req.conversationId, req.userId, sanitizedPayload)
     const event = bp.IO.Event({
-      botId,
+      messageId: message.id,
+      botId: req.botId,
       channel: 'web',
       direction: 'incoming',
       payload,
-      target: userId,
-      threadId: conversationId,
+      target: req.userId,
+      threadId: req.conversationId,
       type: payload.type,
-      credentials
+      credentials: req.credentials
     })
 
     if (useDebugger) {
       event.debugger = true
     }
 
-    const message = await db.appendUserMessage(botId, userId, conversationId, sanitizedPayload, event.id, user)
-    bp.realtime.sendPayload(bp.RealTimePayload.forVisitor(userId, 'webchat.message', message))
+    bp.realtime.sendPayload(bp.RealTimePayload.forVisitor(req.visitorId, 'webchat.message', message))
 
     await bp.events.sendEvent(event)
   }
 
   router.post(
-    '/events/:userId',
+    '/events',
     bp.http.extractExternalToken,
-    asyncMiddleware(async (req: BPRequest, res: Response) => {
-      const payload = req.body || {}
-      const { botId = undefined, userId = undefined } = req.params || {}
+    assertUserInfo(),
+    asyncMiddleware(async (req: ChatRequest, res: Response) => {
+      const { userId, botId } = req
+      let { conversationId } = req
+
+      const payload = req.body.payload || {}
+
       await bp.users.getOrCreateUser('web', userId, botId)
-      const conversationId = await db.getOrCreateRecentConversation(botId, userId, { originatesFromUserMessage: true })
+
+      if (!conversationId) {
+        conversationId = (await getRecent(req.messaging, userId)).id
+      }
 
       const event = bp.IO.Event({
         botId,
         channel: 'web',
         direction: 'incoming',
         target: userId,
-        threadId: conversationId,
+        threadId: conversationId.toString(),
         type: payload.type,
         payload,
         credentials: req.credentials
@@ -326,14 +445,18 @@ export default async (bp: typeof sdk, db: Database) => {
     '/saveFeedback',
     bp.http.extractExternalToken,
     asyncMiddleware(async (req: BPRequest, res: Response) => {
-      const { eventId, target, feedback } = req.body
+      const { botId } = req.params
+      const { messageId, target, feedback } = req.body
 
-      if (!target || !eventId || !feedback) {
+      if (!target || !messageId || !feedback) {
         return res.status(400).send('Missing required fields')
       }
 
+      const [event] = await bp.events.findEvents({ botId, messageId })
+      const { userId } = await db.getMappingFromVisitor(botId, target)
+
       try {
-        await bp.events.saveUserFeedback(eventId, target, feedback, 'qna')
+        await bp.events.saveUserFeedback(event.incomingEventId, userId, feedback, 'qna')
         res.sendStatus(200)
       } catch (err) {
         res.status(400).send(err)
@@ -345,112 +468,141 @@ export default async (bp: typeof sdk, db: Database) => {
     '/feedbackInfo',
     bp.http.extractExternalToken,
     asyncMiddleware(async (req: BPRequest, res: Response) => {
-      const { target, eventIds } = req.body
+      const { botId } = req.params
+      const { target, messageIds } = req.body
 
-      if (!target || !eventIds) {
+      if (!target || !messageIds) {
         return res.status(400).send('Missing required fields')
       }
 
-      res.send(await db.getFeedbackInfoForEventIds(target, eventIds))
+      const { userId } = await db.getMappingFromVisitor(botId, target)
+      res.send(await db.getFeedbackInfoForMessageIds(userId, messageIds))
     })
   )
 
   router.post(
-    '/conversations/:userId/:conversationId/reset',
+    '/conversations/reset',
     bp.http.extractExternalToken,
-    asyncMiddleware(async (req: BPRequest, res: Response) => {
-      const { botId, userId, conversationId } = req.params
+    assertUserInfo({ convoIdRequired: true }),
+    asyncMiddleware(async (req: ChatRequest, res: Response) => {
+      const { botId, userId, conversationId } = req
       await bp.users.getOrCreateUser('web', userId, botId)
 
       const payload = {
-        text: `Reset the conversation`,
+        text: 'Reset the conversation',
         type: 'session_reset'
       }
 
-      await sendNewMessage(botId, userId, conversationId, payload, req.credentials)
+      await sendNewMessage(req, payload, false)
 
-      const sessionId = await bp.dialog.createId({ botId, target: userId, threadId: conversationId, channel: 'web' })
-      await bp.dialog.deleteSession(sessionId)
+      const sessionId = bp.dialog.createId({
+        botId,
+        target: userId,
+        threadId: conversationId.toString(),
+        channel: 'web'
+      })
+
+      await bp.dialog.deleteSession(sessionId, botId)
       res.sendStatus(200)
     })
   )
 
-  router.post('/conversations/:userId/new', async (req: BPRequest, res: Response) => {
-    const { userId, botId } = req.params
-    const convoId = await db.createConversation(botId, userId)
-    res.send({ convoId })
-  })
+  router.post(
+    '/conversations/new',
+    assertUserInfo(),
+    asyncMiddleware(async (req: ChatRequest, res: Response) => {
+      const { userId } = req
 
-  router.post('/conversations/:userId/:conversationId/reference/:reference', async (req: BPRequest, res: Response) => {
-    try {
-      const { botId, userId, reference } = req.params
-      let { conversationId } = req.params
+      const conversation = await req.messaging.createConversation(userId)
 
-      await bp.users.getOrCreateUser('web', userId, botId)
+      res.send({ convoId: conversation.id })
+    })
+  )
 
-      if (typeof reference !== 'string' || !reference.length || reference.indexOf('=') === -1) {
-        throw new Error('Invalid reference')
+  router.post(
+    '/conversations/reference',
+    assertUserInfo(),
+    asyncMiddleware(async (req: ChatRequest, res: Response) => {
+      try {
+        const { botId, userId } = req
+        const { reference } = req.body
+        let { conversationId } = req
+
+        await bp.users.getOrCreateUser('web', userId, botId)
+
+        if (typeof reference !== 'string' || !reference.length || reference.indexOf('=') === -1) {
+          throw new Error('Invalid reference')
+        }
+
+        if (!conversationId) {
+          conversationId = (await getRecent(req.messaging, userId)).id
+        }
+
+        const message = reference.slice(0, reference.lastIndexOf('='))
+        const signature = reference.slice(reference.lastIndexOf('=') + 1)
+
+        const verifySignature = await bp.security.getMessageSignature(message)
+        if (verifySignature !== signature) {
+          throw new Error('Bad reference signature')
+        }
+
+        const payload = {
+          text: message,
+          signature,
+          type: 'session_reference'
+        }
+
+        const event = bp.IO.Event({
+          botId,
+          channel: 'web',
+          direction: 'incoming',
+          target: userId,
+          threadId: conversationId.toString(),
+          type: payload.type,
+          payload,
+          credentials: req['credentials']
+        })
+
+        await bp.events.sendEvent(event)
+        res.sendStatus(200)
+      } catch (error) {
+        res.status(500).send({ message: error.message })
+      }
+    })
+  )
+
+  router.post(
+    '/preferences/get',
+    assertUserInfo(),
+    asyncMiddleware(async (req: ChatRequest, res: Response) => {
+      const { userId, botId } = req
+      const { result } = await bp.users.getOrCreateUser('web', userId, botId)
+
+      return res.send({ language: result.attributes.language })
+    })
+  )
+
+  router.post(
+    '/preferences',
+    assertUserInfo(),
+    asyncMiddleware(async (req: ChatRequest, res: Response) => {
+      const { userId, botId } = req
+      const payload = req.body || {}
+      const preferredLanguage = payload.language
+
+      const bot = await bp.bots.getBotById(botId)
+      const validLanguage = bot.languages.includes(preferredLanguage)
+      if (!validLanguage) {
+        return res.status(400).send(ERR_BAD_LANGUAGE)
       }
 
-      if (!conversationId || conversationId == 'null') {
-        conversationId = await db.getOrCreateRecentConversation(botId, userId, { originatesFromUserMessage: true })
-      }
-
-      const message = reference.slice(0, reference.lastIndexOf('='))
-      const signature = reference.slice(reference.lastIndexOf('=') + 1)
-
-      const verifySignature = await bp.security.getMessageSignature(message)
-      if (verifySignature !== signature) {
-        throw new Error('Bad reference signature')
-      }
-
-      const payload = {
-        text: message,
-        signature: signature,
-        type: 'session_reference'
-      }
-
-      const event = bp.IO.Event({
-        botId,
-        channel: 'web',
-        direction: 'incoming',
-        target: userId,
-        threadId: conversationId,
-        type: payload.type,
-        payload,
-        credentials: req['credentials']
+      await bp.users.updateAttributes('web', userId, {
+        language: preferredLanguage
       })
 
-      await bp.events.sendEvent(event)
-      res.sendStatus(200)
-    } catch (error) {
-      res.status(500).send({ message: error.message })
-    }
-  })
-
-  router.get('/preferences/:userId', async (req: BPRequest, res: Response) => {
-    const { userId, botId } = req.params
-    const { result } = await bp.users.getOrCreateUser('web', userId, botId)
-
-    return res.send({ language: result.attributes.language })
-  })
-
-  router.post('/preferences/:userId', async (req: BPRequest, res: Response) => {
-    const { userId, botId } = req.params
-    const payload = req.body || {}
-    const preferredLanguage = payload.language
-    const bot = await bp.bots.getBotById(botId)
-    const validLanguage = bot.languages.includes(preferredLanguage)
-    if (!validLanguage) {
-      return res.status(400).send(ERR_BAD_LANGUAGE)
-    }
-
-    await bp.users.updateAttributes('web', userId, {
-      language: preferredLanguage
+      return res.sendStatus(200)
     })
-
-    return res.sendStatus(200)
-  })
+  )
 
   const getMessageContent = (message, type) => {
     const { payload } = message
@@ -463,37 +615,83 @@ export default async (bp: typeof sdk, db: Database) => {
     return (payload && payload.text) || message.message_text || wrappedText || `Event (${type})`
   }
 
-  const convertToTxtFile = async conversation => {
+  const convertToTxtFile = async (botId: string, conversation: Conversation & { messages: Message[] }) => {
     const { messages } = conversation
     const { result: user } = await bp.users.getOrCreateUser('web', conversation.userId)
     const timeFormat = 'MM/DD/YY HH:mm'
     const fullName = `${user.attributes['first_name'] || ''} ${user.attributes['last_name'] || ''}`
-    const metadata = `Title: ${conversation.title}\r\nCreated on: ${moment(conversation.created_on).format(
+    const metadata = `Conversation Id: ${conversation.id}\r\nCreated on: ${moment(conversation.createdOn).format(
       timeFormat
     )}\r\nUser: ${fullName}\r\n-----------------\r\n`
 
     const messagesAsTxt = messages.map(message => {
-      const type = (message.payload && message.payload.type) || message.message_type
+      const type = message.payload?.type
       if (type === 'session_reset') {
         return ''
       }
-      const userName = message.full_name.indexOf('undefined') > -1 ? 'User' : message.full_name
-      return `[${moment(message.sent_on).format(timeFormat)}] ${userName}: ${getMessageContent(message, type)}\r\n`
+      return `[${moment(message.sentOn).format(timeFormat)}] ${message.authorId ? 'User' : botId}: ${getMessageContent(
+        message,
+        type
+      )}\r\n`
     })
 
     return [metadata, ...messagesAsTxt].join('')
   }
 
-  router.get('/conversations/:userId/:conversationId/download/txt', async (req: BPRequest, res: Response) => {
-    const { userId, conversationId, botId } = req.params
+  router.post(
+    '/conversations/download/txt',
+    assertUserInfo({ convoIdRequired: true }),
+    asyncMiddleware(async (req: ChatRequest, res: Response) => {
+      const { conversationId, botId } = req
 
-    if (!validateUserId(userId)) {
-      return res.status(400).send(ERR_USER_ID_REQ)
-    }
+      const config = (await bp.config.getModuleConfigForBot('channel-web', botId)) as Config
+      const conversation = await req.messaging.getConversation(conversationId)
+      const messages = await req.messaging.listMessages(conversationId, config.maxMessagesHistory)
 
-    const conversation = await db.getConversation(userId, conversationId, botId)
-    const txt = await convertToTxtFile(conversation)
+      const txt = await convertToTxtFile(botId, { ...conversation, messages })
 
-    res.send({ txt, name: `${conversation.title}.txt` })
-  })
+      res.send({ txt, name: `Conversation ${conversation.id}.txt` })
+    })
+  )
+
+  router.post(
+    '/conversations/messages/delete',
+    assertUserInfo({ convoIdRequired: true }),
+    asyncMiddleware(async (req: ChatRequest, res: Response) => {
+      const { visitorId, conversationId } = req
+
+      bp.realtime.sendPayload(bp.RealTimePayload.forVisitor(visitorId, 'webchat.clear', { conversationId }))
+
+      await req.messaging.deleteMessagesByConversation(conversationId)
+
+      res.sendStatus(204)
+    })
+  )
+
+  // NOTE: this is a temporary route and allows an agent to delete a channel web user's conversation messages
+  // until today this was completed by calling channel web api directly but it's api has been secured with a temporary sessionId
+  // soon enough, once channel-web's implementation moves to messaging api we'll be able to remove this and use messaging directly
+  // usage of a private router because authentication is handled for us
+  const privateRouter = bp.http.createRouterForBot('channel-web-private')
+
+  // NOTE : this uses duplicated code taken from public route (ln#624 - ln#636) so it's easy to remove once we can (see prev note)
+  privateRouter.post(
+    '/conversations/:id/messages/delete',
+    asyncMiddleware(async (req: ChatRequest, res: Response) => {
+      const { botId } = req.params
+      const conversationId = req.params.id
+      const { userId } = req.body
+
+      const conversation = await bp.messaging.forBot(botId).getConversation(conversationId)
+      if (!userId || conversation?.userId !== userId) {
+        return res.status(400).send(ERR_BAD_CONV_ID)
+      }
+
+      const { visitorId } = await db.getMappingFromUser(userId)
+      bp.realtime.sendPayload(bp.RealTimePayload.forVisitor(visitorId, 'webchat.clear', { conversationId }))
+
+      await bp.messaging.forBot(botId).deleteMessagesByConversation(conversationId)
+      res.sendStatus(204)
+    })
+  )
 }

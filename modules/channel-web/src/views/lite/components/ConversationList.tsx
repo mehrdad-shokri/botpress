@@ -4,16 +4,12 @@ import { InjectedIntlProps, injectIntl } from 'react-intl'
 
 import Add from '../icons/Add'
 import { RootStore, StoreDef } from '../store'
-import { ConversationSummary } from '../typings'
+import { RecentConversation } from '../typings'
 
 const ConversationListItem = injectIntl(({ conversation, onClick, hasFocus, intl }: ConversationListItemProps) => {
-  const title =
-    conversation.title ||
-    conversation.message_author ||
-    intl.formatMessage({ id: 'conversationList.untitledConversation', defaultMessage: 'Untitled Conversation' })
-
-  const date = intl.formatRelative(conversation.message_sent_on || conversation.created_on)
-  const message = conversation.message_text || '...'
+  const title = intl.formatMessage({ id: 'conversationList.title' }, { id: conversation.id })
+  const date = intl.formatRelative(conversation.lastMessage?.sentOn || conversation.createdOn)
+  const message = conversation.lastMessage?.payload?.text || '...'
 
   return (
     <div className={'bpw-convo-item'} onClick={onClick}>
@@ -31,7 +27,7 @@ const ConversationListItem = injectIntl(({ conversation, onClick, hasFocus, intl
 })
 
 type ConversationListItemProps = {
-  conversation: ConversationSummary
+  conversation: RecentConversation
   hasFocus: boolean
   onClick: (event: React.MouseEvent) => void
 } & InjectedIntlProps &
@@ -77,9 +73,9 @@ class ConversationList extends React.Component<ConversationListProps> {
 
     if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
       this.changeFocus(1)
-    } else if (e.key == 'ArrowUp' || e.key == 'ArrowLeft') {
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
       this.changeFocus(-1)
-    } else if (e.key == 'Enter' && this.state.focusIdx && this.state.focusIdx < this.props.conversations.length) {
+    } else if (e.key === 'Enter' && this.state.focusIdx && this.state.focusIdx < this.props.conversations.length) {
       const convoId = this.props.conversations[this.state.focusIdx].id
       this.props.fetchConversation.bind(this, convoId)
     }
@@ -92,7 +88,7 @@ class ConversationList extends React.Component<ConversationListProps> {
         {conversations.map((convo, idx) => (
           <ConversationListItem
             key={convo.id}
-            hasFocus={this.state.focusIdx == idx}
+            hasFocus={this.state.focusIdx === idx}
             conversation={convo}
             onClick={fetchConversation.bind(this, convo.id)}
           />

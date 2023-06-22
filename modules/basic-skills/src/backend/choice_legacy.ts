@@ -5,10 +5,12 @@ import yn from 'yn'
 import { ChoiceData } from './choice'
 
 const generateFlowLegacy = async (data: ChoiceData): Promise<sdk.FlowGenerationResult> => {
-  const { randomId } = data
+  const { variableName } = data.config
+  const randomId = variableName && variableName.length ? variableName : data.randomId
   const hardRetryLimit = 10
   const nbMaxRetries = Math.min(Number(data.config.nbMaxRetries), hardRetryLimit)
   const repeatQuestion = yn(data.config.repeatChoicesOnInvalid)
+  const keySuffix = randomId ? `-${randomId}` : ''
 
   const sorrySteps = []
 
@@ -31,6 +33,18 @@ const generateFlowLegacy = async (data: ChoiceData): Promise<sdk.FlowGenerationR
     {
       name: 'entry',
       onEnter: [
+        {
+          type: sdk.NodeActionType.RunAction,
+          name: `builtin/setVariable {"type":"temp","name":"skill-choice-invalid-count${keySuffix}","value": 0}`
+        },
+        {
+          type: sdk.NodeActionType.RunAction,
+          name: `builtin/setVariable {"type":"temp","name":"skill-choice-valid${keySuffix}","value": null}`
+        },
+        {
+          type: sdk.NodeActionType.RunAction,
+          name: `builtin/setVariable {"type":"temp","name":"skill-choice-ret${keySuffix}","value": null}`
+        },
         {
           type: sdk.NodeActionType.RenderElement,
           name: `#!${data.contentId}`,
@@ -81,7 +95,7 @@ const generateFlowLegacy = async (data: ChoiceData): Promise<sdk.FlowGenerationR
   return {
     transitions: createTransitions(data, randomId),
     flow: {
-      nodes: nodes,
+      nodes,
       catchAll: {
         next: []
       }

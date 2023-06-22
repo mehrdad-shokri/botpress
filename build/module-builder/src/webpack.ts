@@ -41,10 +41,13 @@ export function config(projectPath) {
       'botpress/shared': 'BotpressShared'
     },
     resolveLoader: {
-      modules: ['node_modules', path.resolve(__dirname, '../node_modules')]
+      modules: [path.resolve(__dirname, '../node_modules'), 'node_modules']
     },
     resolve: {
-      modules: ['node_modules', path.resolve(__dirname, '../../../src/bp/ui-studio/node_modules')],
+      alias: {
+        common: path.resolve(__dirname, '../../../packages/bp/dist/common')
+      },
+      modules: ['node_modules', path.resolve(__dirname, '../../../packages/ui-shared/node_modules')],
       extensions: ['.js', '.jsx', '.tsx', '.ts']
     },
     plugins: [new CleanWebpackPlugin()],
@@ -60,7 +63,7 @@ export function config(projectPath) {
               presets: [['@babel/preset-env'], '@babel/preset-typescript', '@babel/preset-react'],
               plugins: [
                 ['@babel/plugin-proposal-decorators', { legacy: true }],
-                ['@babel/plugin-proposal-class-properties', { loose: true }],
+                ['@babel/plugin-proposal-class-properties'],
                 '@babel/plugin-syntax-function-bind',
                 '@babel/plugin-proposal-function-bind'
               ]
@@ -78,7 +81,7 @@ export function config(projectPath) {
               options: {
                 modules: true,
                 importLoaders: 1,
-                localIdentName: packageJson.name + '__[name]__[local]___[hash:base64:5]'
+                localIdentName: `${packageJson.name}__[name]__[local]___[hash:base64:5]`
               }
             },
             { loader: 'sass-loader' }
@@ -101,7 +104,7 @@ export function config(projectPath) {
   }
 
   if (process.argv.find(x => x.toLowerCase() === '--analyze-full')) {
-    full.plugins.push(new BundleAnalyzerPlugin())
+    full.plugins!.push(new BundleAnalyzerPlugin())
   }
 
   if (packageJson.webpack) {
@@ -125,7 +128,7 @@ export function config(projectPath) {
   })
 
   if (process.argv.find(x => x.toLowerCase() === '--analyze-lite')) {
-    lite.plugins.push(new BundleAnalyzerPlugin())
+    lite.plugins!.push(new BundleAnalyzerPlugin())
   }
 
   const webpackFile = path.join(projectPath, 'webpack.frontend.js')

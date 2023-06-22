@@ -1,7 +1,9 @@
 import classnames from 'classnames'
+import sortBy from 'lodash/sortBy'
 import { inject } from 'mobx-react'
 import React from 'react'
 
+import { renderPayload } from '../../../../../../../packages/ui-shared-lite/Payloads'
 import { RootStore, StoreDef } from '../../store'
 import { Message as MessageDetails } from '../../typings'
 
@@ -10,10 +12,11 @@ import Message from './Message'
 
 class MessageGroup extends React.Component<Props> {
   state = {
-    hasError: false
+    hasError: false,
+    audioPlayingIndex: 0
   }
 
-  static getDerivedStateFromError(error) {
+  static getDerivedStateFromError(_error: Error) {
     return { hasError: true }
   }
 
@@ -50,7 +53,17 @@ class MessageGroup extends React.Component<Props> {
     return payload
   }
 
+  onAudioEnded = () => {
+    if (this.state.audioPlayingIndex >= this.props.messages.length - 1) {
+      this.state.audioPlayingIndex = -1
+    } else {
+      this.setState({ ...this.state, audioPlayingIndex: this.state.audioPlayingIndex += 1 })
+    }
+  }
+
   render() {
+    const { messages, avatar, isBot, showUserName, userName } = this.props
+
     const fromLabel = this.props.store.intl.formatMessage({
       id: this.props.isBot ? 'message.fromBotLabel' : 'message.fromMeLabel',
       defaultMessage: 'Me'
@@ -64,53 +77,57 @@ class MessageGroup extends React.Component<Props> {
       <div
         role="main"
         className={classnames('bpw-message-big-container', {
-          'bpw-from-user': !this.props.isBot,
-          'bpw-from-bot': this.props.isBot
+          'bpw-from-user': !isBot,
+          'bpw-from-bot': isBot
         })}
       >
-        {this.props.avatar}
+        {avatar}
         <div role="region" className={'bpw-message-container'}>
-          {this.props.showUserName && <div className={'bpw-message-username'}>{this.props.userName}</div>}
+          {showUserName && <div className={'bpw-message-username'}>{userName}</div>}
           <div aria-live="assertive" role="log" className={'bpw-message-group'}>
             <span data-from={fromLabel} className="from hidden" aria-hidden="true">
               {fromLabel}
             </span>
-            {this.props.messages.map((data, i) => {
-              const isLastMsg = i == this.props.messages.length - 1
-              const payload = this.convertPayloadFromOldFormat(data)
+            {sortBy(messages, ['sentOn', 'eventId']).map((message, i, messages) => {
+              let payload = this.convertPayloadFromOldFormat(message)
+
+              if (payload.wrapped) {
+                payload = { ...payload, wrapped: renderPayload(payload.wrapped) }
+              } else {
+                payload = renderPayload(payload)
+              }
 
               const showInlineFeedback =
-                this.props.isBot &&
-                isLastMsg &&
-                (payload.wrapped ? payload.wrapped.collectFeedback : payload.collectFeedback)
+                isBot && (payload.wrapped ? payload.wrapped.collectFeedback : payload.collectFeedback)
 
               return (
                 <Message
-                  key={`msg-${i}`}
-                  isHighlighted={
-                    this.props.highlightedMessages && this.props.highlightedMessages.includes(data.incomingEventId)
-                  }
+                  key={message.id}
+                  isHighlighted={this.props.highlightedMessages && this.props.highlightedMessages.includes(message.id)}
                   inlineFeedback={
                     showInlineFeedback && (
                       <InlineFeedback
                         intl={this.props.store.intl}
-                        incomingEventId={data.incomingEventId}
+                        messageId={message.id}
                         onFeedback={this.props.onFeedback}
-                        eventFeedbacks={this.props.store.eventFeedbacks}
+                        messageFeedbacks={this.props.store.messageFeedbacks}
                       />
                     )
                   }
+                  messageId={message.id}
+                  noBubble={!!payload.noBubble}
                   fromLabel={fromLabel}
                   isLastOfGroup={i >= this.props.messages.length - 1}
                   isLastGroup={this.props.isLastGroup}
-                  isBotMessage={!data.userId}
-                  incomingEventId={data.incomingEventId}
+                  isBotMessage={!message.authorId}
                   payload={payload}
-                  sentOn={data.sent_on}
+                  sentOn={message.sentOn}
                   onSendData={this.props.onSendData}
                   onFileUpload={this.props.onFileUpload}
                   bp={this.props.bp}
                   store={this.props.store}
+                  onAudioEnded={this.onAudioEnded}
+                  shouldPlay={this.state.audioPlayingIndex === i}
                 />
               )
             })}

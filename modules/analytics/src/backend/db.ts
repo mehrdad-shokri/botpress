@@ -1,10 +1,10 @@
 import * as sdk from 'botpress/sdk'
 import Knex from 'knex'
-import { mergeWith, omit, take } from 'lodash'
+import { mergeWith, omit, take, Dictionary } from 'lodash'
 import moment from 'moment'
 import ms from 'ms'
 
-const TABLE_NAME = 'bot_analytics'
+export const TABLE_NAME = 'bot_analytics'
 
 const Metric = <const>[
   'sessions_count',
@@ -15,6 +15,7 @@ const Metric = <const>[
   'top_msg_nlu_none',
   'enter_flow_count',
   'msg_nlu_intent',
+  'msg_nlu_language',
 
   'workflow_started_count',
   'workflow_completed_count',
@@ -25,20 +26,27 @@ const Metric = <const>[
   'feedback_positive_workflow',
   'feedback_negative_workflow'
 ]
-type MetricTypes = typeof Metric[number]
+export type MetricTypes = typeof Metric[number]
 
-const mergeEntries = (a: Dic<number>, b: Dic<number>): Dic<number> => {
+const mergeEntries = (a: Dictionary<number>, b: Dictionary<number>): Dictionary<number> => {
   return mergeWith(a, b, (v1, v2) => (v1 || 0) + (v2 || 0))
 }
 
 export default class Database {
-  private knex: Knex & sdk.KnexExtension
-  private cache_entries: Dic<number> = {}
+  knex: Knex & sdk.KnexExtension
+  private readonly flusher: ReturnType<typeof setInterval>
+
+  private cache_entries: Dictionary<number> = {}
   private flush_lock: boolean
 
   constructor(private bp: typeof sdk) {
     this.knex = bp.database
-    setInterval(() => this.flushMetrics(), ms('10s'))
+    this.flusher = setInterval(() => this.flushMetrics(), ms('10s'))
+  }
+
+  // Mostly useful for tests - kill the setInterval so jest can exit
+  destroy() {
+    clearInterval(this.flusher)
   }
 
   async initialize() {
@@ -94,7 +102,7 @@ export default class Database {
           const [date, botId, channel, metric, subMetric] = key.split('|')
           const value = original[key]
           return this.knex
-            .raw(`(:date:, :botId, :channel, :metric, :subMetric, :value)`, {
+            .raw('(:date:, :botId, :channel, :metric, :subMetric, :value)', {
               date: this.knex.raw(`date('${date}')`),
               botId,
               channel,
@@ -131,13 +139,8 @@ export default class Database {
   }
 
   async getMetrics(botId: string, options?: { startDate: Date; endDate: Date; channel: string }) {
-    const startDate = moment(options?.startDate ?? new Date())
-      .startOf('day')
-      .toDate()
-
-    const endDate = moment(options?.endDate ?? new Date())
-      .endOf('day')
-      .toDate()
+    const startDate = options?.startDate ?? new Date()
+    const endDate = options?.endDate ?? new Date()
 
     let queryMetrics = this.knex(TABLE_NAME)
       .select()
@@ -149,6 +152,12 @@ export default class Database {
       .andWhere(this.knex.date.isBetween('createdOn', startDate, endDate))
       .groupBy(['createdOn', 'channel'])
 
+    let queryReturningUsers = this.knex('bot_chat_users')
+      .where({ botId })
+      .andWhere(this.knex.date.isBetween('lastSeenOn', startDate, endDate))
+      .groupBy(['lastSeenOn', 'channel'])
+      .andWhereRaw('"lastSeenOn" <> "createdOn"')
+
     let queryActiveUsers = this.knex('bot_chat_users')
       .where({ botId })
       .andWhere(this.knex.date.isBetween('lastSeenOn', startDate, endDate))
@@ -158,6 +167,7 @@ export default class Database {
       queryMetrics = queryMetrics.andWhere({ channel: options.channel })
       queryNewUsers = queryNewUsers.andWhere({ channel: options.channel })
       queryActiveUsers = queryActiveUsers.andWhere({ channel: options.channel })
+      queryReturningUsers = queryReturningUsers.andWhere({ channel: options.channel })
     }
 
     try {
@@ -172,11 +182,17 @@ export default class Database {
         'channel',
         this.knex.raw('count(*) as value')
       )
+      const returningUsersCount = await queryReturningUsers.select(
+        'lastSeenOn as date',
+        'channel',
+        this.knex.raw('count(*) as value')
+      )
 
       return [
         ...metrics,
         ...newUsersCount.map(x => ({ ...x, value: Number(x.value), metric: 'new_users_count' })),
-        ...activeUsersCount.map(x => ({ ...x, value: Number(x.value), metric: 'active_users_count' }))
+        ...activeUsersCount.map(x => ({ ...x, value: Number(x.value), metric: 'active_users_count' })),
+        ...returningUsersCount.map(x => ({ ...x, value: Number(x.value), metric: 'returning_users_count' }))
       ].map(x => ({ ...x, created_on: x.date, date: moment(x.date).format('YYYY-MM-DD') }))
     } catch (err) {
       this.bp.logger.attachError(err).warn('Could not retrieve analytics')

@@ -1,29 +1,47 @@
+import classNames from 'classnames'
 import { observe } from 'mobx'
 import { inject, observer } from 'mobx-react'
 import React from 'react'
 import { FormattedMessage, InjectedIntlProps, injectIntl } from 'react-intl'
 
+import ToolTip from '../../../../../../packages/ui-shared-lite/ToolTip'
 import { RootStore, StoreDef } from '../store'
+import { isRTLText } from '../utils'
 
-class Composer extends React.Component<ComposerProps> {
+import VoiceRecorder from './VoiceRecorder'
+
+const ENTER_CHAR_CODE = 13
+class Composer extends React.Component<ComposerProps, { isRecording: boolean }> {
   private textInput: React.RefObject<HTMLTextAreaElement>
   constructor(props) {
     super(props)
     this.textInput = React.createRef()
+    this.state = { isRecording: false }
   }
 
   componentDidMount() {
-    setTimeout(() => {
-      this.textInput.current.focus()
-    }, 0)
+    this.focus()
 
     observe(this.props.focusedArea, focus => {
-      focus.newValue === 'input' && this.textInput.current.focus()
+      focus.newValue === 'input' && this.textInput.current?.focus()
     })
   }
 
+  componentWillReceiveProps(newProps: Readonly<ComposerProps>) {
+    // Focus on the composer when it's unlocked
+    if (this.props.composerLocked === true && newProps.composerLocked === false) {
+      this.focus()
+    }
+  }
+
+  focus = () => {
+    setTimeout(() => {
+      this.textInput.current?.focus()
+    }, 50)
+  }
+
   handleKeyPress = async e => {
-    if (this.props.enableResetSessionShortcut && e.ctrlKey && e.key === 'Enter') {
+    if (this.props.enableResetSessionShortcut && e.ctrlKey && e.charCode === ENTER_CHAR_CODE) {
       e.preventDefault()
       await this.props.resetSession()
       await this.props.sendMessage()
@@ -48,51 +66,118 @@ class Composer extends React.Component<ComposerProps> {
       if (shouldFocusNext) {
         this.props.focusNext()
       }
-    } else if (e.key == 'ArrowUp' || e.key == 'ArrowDown') {
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
       this.props.recallHistory(e.key)
     }
   }
 
-  handleMessageChanged = e => this.props.updateMessage(e.target.value)
+  handleMessageChanged = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const { updateMessage, composerMaxTextLength } = this.props
+
+    const msg = e.target.value.slice(0, composerMaxTextLength)
+
+    updateMessage(msg)
+  }
+
+  isLastMessageFromBot = (): boolean => {
+    return this.props.currentConversation?.messages?.slice(-1)?.pop()?.authorId === undefined
+  }
+
+  onVoiceStart = () => {
+    this.setState({ isRecording: true })
+  }
+
+  onVoiceEnd = async (voice: Buffer, ext: string) => {
+    this.setState({ isRecording: false })
+
+    await this.props.sendVoiceMessage(voice, ext)
+  }
+
+  onVoiceNotAvailable = () => {
+    console.warn(
+      'Voice input is not available on this browser. Please check https://developer.mozilla.org/en-US/docs/Web/API/MediaRecorder for compatibility'
+    )
+  }
 
   render() {
+    if (this.props.composerHidden) {
+      return null
+    }
+
+    let direction
+    if (this.props.message) {
+      direction = isRTLText.test(this.props.message) ? 'rtl' : 'ltr'
+    }
+
     const placeholder =
       this.props.composerPlaceholder ||
-      this.props.intl.formatMessage({ id: 'composer.placeholder' }, { name: this.props.botName })
+      this.props.intl.formatMessage(
+        {
+          id: this.isLastMessageFromBot() ? 'composer.placeholder' : 'composer.placeholderInit'
+        },
+        { name: this.props.botName }
+      )
 
     return (
-      <div role="region" className={'bpw-composer'}>
+      <div role="region" className={classNames('bpw-composer', direction)}>
         <div className={'bpw-composer-inner'}>
-          <textarea
-            ref={this.textInput}
-            id="input-message"
-            onFocus={this.props.setFocus.bind(this, 'input')}
-            placeholder={placeholder}
-            onChange={this.handleMessageChanged}
-            value={this.props.message}
-            onKeyPress={this.handleKeyPress}
-            onKeyDown={this.handleKeyDown}
-            aria-label={this.props.intl.formatMessage({
-              id: 'composer.message',
-              defaultMessage: 'Message to send'
-            })}
-          />
-          <label htmlFor="input-message" style={{ display: 'none' }}>
-            {placeholder}
-          </label>
+          <div className={'bpw-composer-textarea'}>
+            <textarea
+              ref={this.textInput}
+              id="input-message"
+              onFocus={this.props.setFocus.bind(this, 'input')}
+              placeholder={placeholder}
+              onChange={this.handleMessageChanged}
+              value={this.props.message}
+              onKeyPress={this.handleKeyPress}
+              onKeyDown={this.handleKeyDown}
+              aria-label={this.props.intl.formatMessage({
+                id: 'composer.message',
+                defaultMessage: 'Message to send'
+              })}
+              disabled={this.props.composerLocked}
+            />
+            <label htmlFor="input-message" style={{ display: 'none' }}>
+              {placeholder}
+            </label>
+          </div>
 
-          <button
-            className={'bpw-send-button'}
-            disabled={!this.props.message.length}
-            onClick={this.props.sendMessage.bind(this, undefined)}
-            aria-label={this.props.intl.formatMessage({
-              id: 'composer.send',
-              defaultMessage: 'Send'
-            })}
-            id="btn-send"
-          >
-            <FormattedMessage id={'composer.send'} />
-          </button>
+          <div className={'bpw-send-buttons'}>
+            <ToolTip
+              childId="btn-send"
+              content={
+                this.props.isEmulator
+                  ? this.props.intl.formatMessage({
+                      id: 'composer.interact',
+                      defaultMessage: 'Interact with your chatbot'
+                    })
+                  : this.props.intl.formatMessage({
+                      id: 'composer.sendMessage',
+                      defaultMessage: 'Send Message'
+                    })
+              }
+            >
+              <button
+                className={'bpw-send-button'}
+                disabled={!this.props.message.length || this.props.composerLocked || this.state.isRecording}
+                onClick={this.props.sendMessage.bind(this, undefined)}
+                aria-label={this.props.intl.formatMessage({
+                  id: 'composer.send',
+                  defaultMessage: 'Send'
+                })}
+                id="btn-send"
+              >
+                <FormattedMessage id={'composer.send'} />
+              </button>
+            </ToolTip>
+            {this.props.enableVoiceComposer && (
+              <VoiceRecorder
+                onStart={this.onVoiceStart}
+                onDone={this.onVoiceEnd}
+                onNotAvailable={this.onVoiceNotAvailable}
+              />
+            )}
+          </div>
         </div>
       </div>
     )
@@ -100,25 +185,35 @@ class Composer extends React.Component<ComposerProps> {
 }
 
 export default inject(({ store }: { store: RootStore }) => ({
+  enableVoiceComposer: store.config.enableVoiceComposer,
   message: store.composer.message,
-  intl: store.intl,
-  updateMessage: store.composer.updateMessage,
-  sendMessage: store.sendMessage,
-  recallHistory: store.composer.recallHistory,
-  botName: store.botName,
+  composerLocked: store.composer.locked,
+  composerHidden: store.composer.hidden,
   composerPlaceholder: store.composer.composerPlaceholder,
+  composerMaxTextLength: store.composer.composerMaxTextLength,
+  updateMessage: store.composer.updateMessage,
+  recallHistory: store.composer.recallHistory,
+  intl: store.intl,
+  sendMessage: store.sendMessage,
+  sendVoiceMessage: store.sendVoiceMessage,
+  botName: store.botName,
   setFocus: store.view.setFocus,
   focusedArea: store.view.focusedArea,
   focusPrevious: store.view.focusPrevious,
   focusNext: store.view.focusNext,
   enableArrowNavigation: store.config.enableArrowNavigation,
   enableResetSessionShortcut: store.config.enableResetSessionShortcut,
-  resetSession: store.resetSession
+  resetSession: store.resetSession,
+  currentConversation: store.currentConversation,
+  isEmulator: store.isEmulator,
+  preferredLanguage: store.preferredLanguage
 }))(injectIntl(observer(Composer)))
 
 type ComposerProps = {
   focused: boolean
   composerPlaceholder: string
+  composerLocked: boolean
+  composerHidden: boolean
 } & InjectedIntlProps &
   Pick<
     StoreDef,
@@ -127,6 +222,7 @@ type ComposerProps = {
     | 'intl'
     | 'focusedArea'
     | 'sendMessage'
+    | 'sendVoiceMessage'
     | 'focusPrevious'
     | 'focusNext'
     | 'recallHistory'
@@ -135,5 +231,10 @@ type ComposerProps = {
     | 'message'
     | 'enableArrowNavigation'
     | 'resetSession'
+    | 'isEmulator'
     | 'enableResetSessionShortcut'
+    | 'enableVoiceComposer'
+    | 'currentConversation'
+    | 'preferredLanguage'
+    | 'composerMaxTextLength'
   >

@@ -66,7 +66,7 @@ class ViewStore {
 
   @computed
   get showConversationsButton() {
-    return this.rootStore.config?.showConversationsButton
+    return !this.rootStore.config?.conversationId && this.rootStore.config?.showConversationsButton
   }
 
   @computed
@@ -77,6 +77,13 @@ class ViewStore {
   @computed
   get showDownloadButton() {
     return !this.isConversationsDisplayed && !this.isBotInfoDisplayed && this.rootStore.config.enableTranscriptDownload
+  }
+
+  @computed
+  get showDeleteConversationButton() {
+    return (
+      !this.isConversationsDisplayed && !this.isBotInfoDisplayed && this.rootStore.config.enableConversationDeletion
+    )
   }
 
   @computed
@@ -148,11 +155,6 @@ class ViewStore {
   }
 
   @action.bound
-  postMessage(name: string) {
-    window.parent.postMessage({ name: name }, '*')
-  }
-
-  @action.bound
   incrementUnread() {
     this.unreadCount++
   }
@@ -185,7 +187,7 @@ class ViewStore {
   @action.bound
   setLoadingCompleted() {
     this._isLoading = false
-    this.postMessage('webchatLoaded')
+    this.rootStore.postMessage('webchatLoaded')
   }
 
   @action.bound
@@ -201,21 +203,21 @@ class ViewStore {
   @action.bound
   setLayoutWidth(width: string | number) {
     if (width) {
-      this.dimensions.layout = typeof width === 'number' ? width + 'px' : width
+      this.dimensions.layout = typeof width === 'number' ? `${width}px` : width
     }
   }
 
   @action.bound
   setContainerWidth(width: string | number) {
     if (width) {
-      this.dimensions.container = width = typeof width === 'number' ? width + 'px' : width
+      this.dimensions.container = width = typeof width === 'number' ? `${width}px` : width
     }
   }
 
   @action.bound
   addCustomAction(newAction: CustomAction) {
     if (this.customActions.find(act => act.id === newAction.id)) {
-      console.log(`Can't add another action with the same ID.`)
+      console.error("Can't add another action with the same ID.")
       return
     }
 
@@ -230,7 +232,7 @@ class ViewStore {
   @action.bound
   addHeaderButton(newButton: CustomButton) {
     if (this.customButtons.find(btn => btn.id === newButton.id)) {
-      console.log(`Can't add another button with the same ID.`)
+      console.error("Can't add another button with the same ID.")
       return
     }
 
@@ -258,18 +260,19 @@ class ViewStore {
   showChat() {
     if (this.disableAnimations) {
       this.activeView = 'side'
+      this.rootStore.postMessage('webchatOpened')
       return this._updateTransitions({ widgetTransition: undefined, sideTransition: 'none' })
     }
 
     this._updateTransitions({ widgetTransition: 'fadeOut' })
 
-    setTimeout(() => {
-      this._updateTransitions({ sideTransition: 'fadeIn' })
-    }, constants.ANIM_DURATION + 10)
+    this._endAnimation('side', {
+      beforeViewChange: () => {
+        this._updateTransitions({ sideTransition: 'fadeIn' })
+      }
+    })
 
-    this._endAnimation('side')
-
-    this.postMessage('webchatOpened')
+    this.rootStore.postMessage('webchatOpened')
   }
 
   @action.bound
@@ -280,26 +283,30 @@ class ViewStore {
 
     if (this.disableAnimations) {
       this.activeView = 'widget'
+      this.rootStore.postMessage('webchatClosed')
       return this._updateTransitions({ widgetTransition: undefined, sideTransition: undefined })
     }
 
     this._updateTransitions({ sideTransition: 'fadeOut' })
 
-    if (!this.activeView || this.activeView === 'side') {
-      setTimeout(() => {
-        this._updateTransitions({ widgetTransition: 'fadeIn' })
-      }, constants.ANIM_DURATION + 10)
-    }
+    this._endAnimation('widget', {
+      beforeViewChange: () => {
+        if (!this.activeView || this.activeView === 'side') {
+          this._updateTransitions({ widgetTransition: 'fadeIn' })
+        }
+      }
+    })
 
-    this._endAnimation('widget')
-
-    this.postMessage('webchatClosed')
+    this.rootStore.postMessage('webchatClosed')
   }
 
   @action.bound
-  private _endAnimation(finalView) {
+  private _endAnimation(finalView, opts) {
+    opts = opts || {}
+
     setTimeout(() => {
       runInAction(() => {
+        opts.beforeViewChange && opts.beforeViewChange()
         this.activeView = finalView
       })
     }, constants.ANIM_DURATION)
